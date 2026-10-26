@@ -1316,7 +1316,7 @@ int asCModule::AddScriptFunction(asCScriptFunction *func)
 			int c = *(asBYTE*)&bc[n];
 			if( c == asBC_FuncPtr )
 			{
-				asCScriptFunction *f = reinterpret_cast<asCScriptFunction*>(asBC_PTRARG(&bc[n]));
+				asCScriptFunction *f = (asCScriptFunction*)asBC_PTRARG(&bc[n]);
 				// Anonymous functions start with $
 				// There are never two equal anonymous functions so it is not necessary to look for duplicates
 				if( f && f->name[0] == '$' )

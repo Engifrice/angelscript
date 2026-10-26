@@ -183,8 +183,9 @@ void asCString::Assign(const char *str, size_t len)
 {
 	Allocate(len, false);
 
-	// Copy the string
-	memcpy(AddressOf(), str, length);
+	// Copy the string. The source may be null if the length is 0
+	if( length )
+		memcpy(AddressOf(), str, length);
 	AddressOf()[length] = 0;
 }
 

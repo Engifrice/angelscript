@@ -5313,7 +5313,8 @@ void asCContext::DetermineLiveObjects(asCArray<int> &liveObjects, asUINT stackLe
 
 	// Determine which object variables that are really live ones
 	liveObjects.SetLength(func->scriptData->variables.GetLength());
-	memset(liveObjects.AddressOf(), 0, sizeof(int)*liveObjects.GetLength());
+	if( liveObjects.GetLength() )
+		memset(liveObjects.AddressOf(), 0, sizeof(int)*liveObjects.GetLength());
 	for( int n = 0; n < (int)func->scriptData->objVariableInfo.GetLength(); n++ )
 	{
 		// Find the first variable info with a larger position than the current

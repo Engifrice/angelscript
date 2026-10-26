@@ -13769,14 +13769,16 @@ int asCCompiler::CompileExpressionPreOp(asCScriptNode *node, asCExprContext *ctx
 			{
 				if (ctx->type.dataType.IsIntegerType())
 				{
+					// The 32 and 64 bit values are negated as unsigned values, which gives the same
+					// result without overflow when negating the smallest negative value
 					if (ctx->type.dataType.GetSizeInMemoryBytes() == 4)
-						ctx->type.SetConstantDW(-(int)ctx->type.GetConstantDW());
+						ctx->type.SetConstantDW(asDWORD(0) - ctx->type.GetConstantDW());
 					else if (ctx->type.dataType.GetSizeInMemoryBytes() == 2)
 						ctx->type.SetConstantW(-(asINT16)ctx->type.GetConstantW());
 					else if (ctx->type.dataType.GetSizeInMemoryBytes() == 1)
 						ctx->type.SetConstantB(-(asINT8)ctx->type.GetConstantB());
 					else if (ctx->type.dataType.GetSizeInMemoryBytes() == 8)
-						ctx->type.SetConstantQW(-(asINT64)ctx->type.GetConstantQW());
+						ctx->type.SetConstantQW(asQWORD(0) - ctx->type.GetConstantQW());
 				}
 				else if( ctx->type.dataType.IsFloatType() )
 					ctx->type.SetConstantF(-ctx->type.GetConstantF());

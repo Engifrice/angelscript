@@ -71,6 +71,8 @@ struct sFunctionDescription
 
 struct sGlobalVariableDescription
 {
+	sGlobalVariableDescription() : script(0), declaredAtNode(0), initializationNode(0), property(0), ns(0), index(0), isCompiled(false), isPureConstant(false), isEnumValue(false), constantValue(0) {}
+
 	asCScriptCode     *script;
 	asCScriptNode     *declaredAtNode;
 	asCScriptNode     *initializationNode;

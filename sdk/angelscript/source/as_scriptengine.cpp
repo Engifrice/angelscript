@@ -4231,12 +4231,12 @@ asCScriptFunction *asCScriptEngine::GenerateFactoryStubForTemplateObjectInstance
 	if( ep.includeJitInstructions )
 	{
 		*(asBYTE*)bc = asBC_JitEntry;
-		*(asPWORD*)(bc+1) = 0;
+		asBC_PTRARG(bc) = 0;
 		bc += asBCTypeSize[asBCInfo[asBC_JitEntry].type];
 	}
 
 	*(asBYTE*)bc = asBC_OBJTYPE;
-	*(asPWORD*)(bc+1) = (asPWORD)ot;
+	asBC_PTRARG(bc) = (asPWORD)ot;
 	bc += asBCTypeSize[asBCInfo[asBC_OBJTYPE].type];
 	if( templateType->flags & asOBJ_VALUE )
 	{

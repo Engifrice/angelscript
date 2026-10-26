@@ -40,6 +40,7 @@
 #define ANGELSCRIPT_H
 
 #include <stddef.h>
+#include <string.h> // memcpy for asCBytecodeArg
 #ifndef _MSC_VER
 #include <stdint.h>
 #endif
@@ -2036,12 +2037,33 @@ const asSBCInfo asBCInfo[256] =
 	asBCINFO(LABEL,			INFO,			0, 0)
 };
 
+// The bytecode is a sequence of dwords, so arguments of 8 bytes are only aligned to 4 bytes.
+// Accessing them through a pointer to the 8 byte type would be undefined behaviour, so they are
+// accessed with memcpy instead, which compilers turn into a single load or store on platforms
+// that allow unaligned access. The object can be used both to read and to write the argument,
+// and it converts to any pointer type when the argument holds a pointer.
+template <typename T>
+class asCBytecodeArg
+{
+public:
+	explicit asCBytecodeArg(void *location) : ptr(location) {}
+
+	operator T() const { T value; memcpy(&value, ptr, sizeof(T)); return value; }
+	template <typename P> operator P*() const { return reinterpret_cast<P*>(asPWORD(T(*this))); }
+
+	asCBytecodeArg &operator=(T value) { memcpy(ptr, &value, sizeof(T)); return *this; }
+	asCBytecodeArg &operator=(const asCBytecodeArg &other) { return *this = T(other); }
+
+private:
+	void *ptr;
+};
+
 // Macros to access bytecode instruction arguments
 #define asBC_DWORDARG(x)  (*(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
 #define asBC_INTARG(x)    (*(int*)(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
-#define asBC_QWORDARG(x)  (*(AS_NAMESPACE_QUALIFIER asQWORD*)(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
+#define asBC_QWORDARG(x)  (AS_NAMESPACE_QUALIFIER asCBytecodeArg<AS_NAMESPACE_QUALIFIER asQWORD>(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
 #define asBC_FLOATARG(x)  (*(float*)(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
-#define asBC_PTRARG(x)    (*(AS_NAMESPACE_QUALIFIER asPWORD*)(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
+#define asBC_PTRARG(x)    (AS_NAMESPACE_QUALIFIER asCBytecodeArg<AS_NAMESPACE_QUALIFIER asPWORD>(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
 #define asBC_WORDARG0(x)  (*(((AS_NAMESPACE_QUALIFIER asWORD*)x)+1))
 #define asBC_WORDARG1(x)  (*(((AS_NAMESPACE_QUALIFIER asWORD*)x)+2))
 #define asBC_SWORDARG0(x) (*(((short*)x)+1))
