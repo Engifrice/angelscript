@@ -48,24 +48,16 @@ BEGIN_AS_NAMESPACE
 extern asALLOCFUNC_t userAlloc;
 extern asFREEFUNC_t  userFree;
 
-#ifdef WIP_16BYTE_ALIGN
+// The maximum type alignment supported
+const asUINT AS_MAX_TYPE_ALIGNMENT = 16;
 
-// TODO: This declaration should be in angelscript.h
-//       when the application can register it's own
-//       aligned memory routines
-typedef void *(*asALLOCALIGNEDFUNC_t)(size_t, size_t);
-typedef void (*asFREEALIGNEDFUNC_t)(void *);
-extern asALLOCALIGNEDFUNC_t userAllocAligned;
-extern asFREEALIGNEDFUNC_t  userFreeAligned;
-typedef void *(*asALLOCALIGNEDFUNCDEBUG_t)(size_t, size_t, const char *, unsigned int);
+// Default aligned memory routines, built on the global memory functions. These
+// are used for object memory when the application hasn't informed its own
+void *defaultAlignedAlloc(size_t size, size_t alignment, void *userParam);
+void  defaultAlignedFree(void *ptr, void *userParam);
 
-// The maximum type alignment supported.
-const int MAX_TYPE_ALIGNMENT = 16;
-
-// Utility function used for assertions.
+// Utility function used for assertions
 bool isAligned(const void* const pointer, asUINT alignment);
-
-#endif // WIP_16BYTE_ALIGN
 
 // We don't overload the new operator as that would affect the application as well
 
@@ -76,11 +68,6 @@ bool isAligned(const void* const pointer, asUINT alignment);
 
 	#define asNEWARRAY(x,cnt)  (x*)userAlloc(sizeof(x)*cnt)
 	#define asDELETEARRAY(ptr) userFree(ptr)
-
-#ifdef WIP_16BYTE_ALIGN
-	#define asNEWARRAYALIGNED(x,cnt, alignment)  (x*)userAllocAligned(sizeof(x)*cnt, alignment)
-	#define asDELETEARRAYALIGNED(ptr) userFreeAligned(ptr)
-#endif
 
 #else
 
@@ -99,13 +86,11 @@ bool isAligned(const void* const pointer, asUINT alignment);
 	#define asNEWARRAY(x,cnt)  (x*)(reinterpret_cast<asALLOCFUNCDEBUG_t>(userAlloc))(sizeof(x)*cnt, __FILE__, __LINE__)
 	#define asDELETEARRAY(ptr) userFree(ptr)
 
-#ifdef WIP_16BYTE_ALIGN
-	//TODO: Equivalent of debug allocation function with alignment?
-	#define asNEWARRAYALIGNED(x,cnt, alignment)  (x*)userAllocAligned(sizeof(x)*cnt, alignment)
-	#define asDELETEARRAYALIGNED(ptr) userFreeAligned(ptr)
 #endif
 
-#endif
+// Aligned arrays for internal use, allocated through the global memory functions
+#define asNEWARRAYALIGNED(x,cnt, alignment)  (x*)defaultAlignedAlloc(sizeof(x)*cnt, alignment, 0)
+#define asDELETEARRAYALIGNED(ptr) defaultAlignedFree(ptr, 0)
 
 END_AS_NAMESPACE
 
