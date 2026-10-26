@@ -126,6 +126,7 @@ public:
 	asCTypeInfo       *GetTypeInfo() const { return typeInfo; }
 
 	int  GetSizeOnStackDWords()  const;
+	int  GetSizeOfArgSlotDWords() const;
 	int  GetSizeInMemoryBytes()  const;
 	int  GetSizeInMemoryDWords() const;
 	int  GetAlignment()          const;

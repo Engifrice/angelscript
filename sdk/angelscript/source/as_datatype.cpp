@@ -721,6 +721,17 @@ int asCDataType::GetSizeOnStackDWords() const
 	return GetSizeInMemoryDWords() + size;
 }
 
+// Every value pushed on the stack takes up a multiple of 8 bytes, which keeps the
+// stack pointer and all arguments aligned to 8 bytes. For the variable type the
+// pointer and the type id each take up their own 8 bytes
+int asCDataType::GetSizeOfArgSlotDWords() const
+{
+	if( tokenType == ttQuestion )
+		return AS_PTR_SIZE + AS_ARG_SLOT_DWORDS;
+
+	return alignOffset(GetSizeOnStackDWords(), AS_ARG_SLOT_DWORDS);
+}
+
 int asCDataType::GetAlignment() const
 {
 	// Handles and references are stored as pointers. The same goes for reference types,
