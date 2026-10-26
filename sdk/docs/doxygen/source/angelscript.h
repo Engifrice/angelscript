@@ -421,9 +421,7 @@ enum asEObjTypeFlags : asQWORD
 	//! The type is a typedef
 	asOBJ_TYPEDEF                     = (1<<28),
 	//! The class is abstract, i.e. cannot be instantiated
-	asOBJ_ABSTRACT                    = (1<<29),
-	//! Reserved for future use.
-	asOBJ_APP_ALIGN16                 = (1<<30)
+	asOBJ_ABSTRACT                    = (1<<29)
 };
 
 // These need to be here since they are too large for enum underlying type (int32 or uint32) on C++98 compliant compilers
@@ -665,6 +663,10 @@ typedef void (*asGENFUNC_t)(asIScriptGeneric *);
 typedef void *(*asALLOCFUNC_t)(size_t);
 //! The function signature for the custom memory deallocation function
 typedef void (*asFREEFUNC_t)(void *);
+//! The function signature for the custom aligned memory allocation function used for objects, see \ref asIScriptEngine::SetObjectMemoryFunctions
+typedef void *(*asALLOCALIGNEDFUNC_t)(size_t size, size_t alignment, void *userParam);
+//! The function signature for the custom memory deallocation function used for objects, see \ref asIScriptEngine::SetObjectMemoryFunctions
+typedef void (*asFREEALIGNEDFUNC_t)(void *ptr, void *userParam);
 //! The function signature for the engine cleanup callback function
 typedef void (*asCLEANENGINEFUNC_t)(asIScriptEngine *);
 //! The function signature for the module cleanup callback function
@@ -1169,6 +1171,34 @@ public:
 	virtual int ShutDownAndRelease() = 0;
 	//! \}
 
+	// Memory for instances of registered value types and script classes
+	//! \name Object memory
+	//! \{
+
+	//! \brief Sets the memory functions used for the instances of value types and script classes.
+	//! \param[in] allocFunc The function that allocates memory with the requested alignment, or null to restore the default.
+	//! \param[in] freeFunc The function that frees the memory, or null to restore the default.
+	//! \param[in] userParam A value that is passed to both functions, e.g. a pointer to an allocator object.
+	//! \return A negative value on error.
+	//! \retval asINVALID_ARG Only one of the functions was informed.
+	//!
+	//! The engine allocates the memory for all instances of registered value types, script classes,
+	//! and initialization list buffers through these functions. The allocation function receives
+	//! the size and the alignment, which is a power of two, and must return memory aligned accordingly,
+	//! or null if the memory couldn't be allocated. The free function receives the same pointer that
+	//! the allocation function returned, so any bookkeeping, such as storing the size of the block,
+	//! is up to the application's functions.
+	//!
+	//! The functions must be set before any object is created, as memory allocated with one
+	//! allocation function must be freed with the matching free function. By default the engine
+	//! uses aligned allocations on top of the functions set with \ref asSetGlobalMemoryFunctions.
+	//!
+	//! The engine's own internal memory is still allocated with the global memory functions.
+	//!
+	//! \see \ref doc_memory
+	virtual int SetObjectMemoryFunctions(asALLOCALIGNEDFUNC_t allocFunc, asFREEALIGNEDFUNC_t freeFunc, void *userParam = 0) = 0;
+	//! \}
+
 	// Engine properties
 	//! \name Engine properties
 	//! \{
@@ -1385,8 +1415,32 @@ public:
 	//! Reference types, which have their memory managed by the application, should be registered with \ref asOBJ_REF.
 	//! Value types, which have their memory managed by the engine, should be registered with \ref asOBJ_VALUE.
 	//!
+	//! The alignment of the type is derived from the size, as the largest power of two that divides the size, but
+	//! never more than 8 bytes. Types that require a larger alignment, e.g. SIMD types, must be registered with the
+	//! overload that takes the alignment.
+	//!
 	//! \see \ref doc_register_type
 	virtual int            RegisterObjectType(const char *obj, int byteSize, asQWORD flags) = 0;
+	//! \brief Registers a new object type with an explicit alignment.
+	//! \param[in] obj The name of the type.
+	//! \param[in] byteSize The size of the type in bytes. Only necessary for value types.
+	//! \param[in] alignment The alignment of the type in bytes, e.g. alignof(T).
+	//! \param[in] flags One or more of the asEObjTypeFlags.
+	//! \return The type id on success or a negative value on error.
+	//! \retval asINVALID_ARG The flags are invalid, the alignment is not a power of two or larger than 16, or the size is not a multiple of the alignment.
+	//! \retval asINVALID_NAME The name is invalid.
+	//! \retval asALREADY_REGISTERED Another type of the same name already exists.
+	//! \retval asNAME_TAKEN The name conflicts with other symbol names.
+	//!
+	//! The engine guarantees that every instance of a value type that it creates is aligned to the
+	//! informed alignment, whether it is a local variable, a member of a script class, a global
+	//! variable, an argument, a return value, or an element in an initialization list. The size
+	//! must be a multiple of the alignment, which is always the case for C++ types.
+	//!
+	//! The alignment of reference types is only informative, as the application allocates them.
+	//!
+	//! \see \ref doc_register_type
+	virtual int            RegisterObjectType(const char *obj, int byteSize, int alignment, asQWORD flags) = 0;
 	//! \brief Registers a property for the object type.
 	//! \param[in] obj The name of the type.
 	//! \param[in] declaration The property declaration in script syntax.
@@ -1812,6 +1866,17 @@ public:
 	//! This method can be used to return the size of any built-in primitive type,
 	//! and also for script declared or application registered enums.
 	virtual int            GetSizeOfPrimitiveType(int typeId) const = 0;
+	//! \brief Returns the alignment of a value of the type as stored by the engine.
+	//! \param[in] typeId The type id of the type.
+	//! \return The alignment of the type in bytes, or 0 if the type id is not valid.
+	//!
+	//! Primitives are aligned to their size, and value types to the alignment they were registered with.
+	//! Handles and reference types are stored as pointers by the engine, so they have the alignment of a
+	//! pointer. The type id 0, which represents a null handle in initialization lists, also has the alignment
+	//! of a pointer.
+	//!
+	//! This is useful for list factories that need to find the values in the \ref doc_reg_basicref_4 "initialization list buffer".
+	virtual int            GetAlignmentOfType(int typeId) const = 0;
 	//! \brief Returns the type interface for type.
 	//! \param[in] typeId The type id of the type.
 	//! \return The type interface for the type, or null if not found.
@@ -1874,8 +1939,8 @@ public:
 	//! Created objects will have their reference counter set to 1 so the application 
 	//! needs to release the pointer when it will no longer use it.
 	//!
-	//! If the type is a registered value type, then the memory for the object will be 
-	//! allocated using the \ref asSetGlobalMemoryFunctions "default memory routine". To 
+	//! If the type is a registered value type, then the memory for the object will be
+	//! allocated using the \ref SetObjectMemoryFunctions "object memory functions". To
 	//! destroy and and deallocate the object it is best to use \ref ReleaseScriptObject.
 	//!
 	//! The method only works for objects, for primitive types and object handles the method 
@@ -1909,6 +1974,22 @@ public:
 	//!
 	//! \see \ref doc_serialization_objects
 	virtual void                  *CreateUninitializedScriptObject(const asITypeInfo *type) = 0;
+	//! \brief Allocates memory for an instance of a value type or script class.
+	//! \param[in] type The type of the object.
+	//! \return A pointer to the uninitialized memory, or null if the type is not a value type or script class.
+	//!
+	//! The memory is allocated with the size and alignment of the type, using the
+	//! \ref SetObjectMemoryFunctions "object memory functions". The memory is not initialized,
+	//! so the application must construct the object in it.
+	//!
+	//! This must be used whenever the application provides memory that the engine will free,
+	//! e.g. when restoring a local variable that is stored on the heap while deserializing a context.
+	//!
+	//! \see \ref doc_serialization_contexts
+	virtual void                  *AllocateObjectMemory(const asITypeInfo *type) = 0;
+	//! \brief Frees memory allocated with \ref AllocateObjectMemory.
+	//! \param[in] ptr A pointer to the memory, the object must already have been destroyed.
+	virtual void                   FreeObjectMemory(void *ptr) = 0;
 	//! \brief Create a delegate for an object and method
 	//! \param[in] func The object method
 	//! \param[in] obj The object pointer
@@ -1933,7 +2014,7 @@ public:
 	//! This calls the release method of the object to release the reference.
 	//!
 	//! If the type is a value type, the method will destroy the object and deallocate
-	//! the memory using the \ref asSetGlobalMemoryFunctions "default memory routine".
+	//! the memory using the \ref SetObjectMemoryFunctions "object memory functions".
 	virtual void                   ReleaseScriptObject(void *obj, const asITypeInfo *type) = 0;
 	//! \brief Increase the reference counter for the script object.
 	//! \param[in] obj A pointer to the object.
@@ -3895,9 +3976,20 @@ public:
 	//! \brief Returns the size of the object type.
 	//! \return The number of bytes necessary to store instances of this type.
 	//!
-	//! Application registered reference types doesn't store this information, 
+	//! Application registered reference types doesn't store this information,
 	//! as the script engine doesn't allocate memory for these itself.
 	virtual asUINT           GetSize() const = 0;
+	//! \brief Returns the alignment of the object type.
+	//! \return The alignment in bytes of instances of this type.
+	//!
+	//! For registered types this is the alignment informed when registering the type, or derived
+	//! from the size if it wasn't informed. Enums and typedefs have the alignment of the underlying
+	//! type, funcdefs the alignment of a pointer, and script classes the largest alignment of their
+	//! members, but never less than the alignment of a pointer.
+	//!
+	//! For application registered reference types the alignment is only informative, as the script
+	//! engine doesn't allocate memory for these itself.
+	virtual asUINT           GetAlignment() const = 0;
 	//! \brief Returns the type id for the object type.
 	//! \return The type id for the object type.
 	virtual int              GetTypeId() const = 0;
@@ -5303,12 +5395,12 @@ const asSBCInfo asBCInfo[256] =
 {
 	asBCINFO(PopPtr,	NO_ARG,			-AS_PTR_SIZE, 0),
 	asBCINFO(PshGPtr,	PTR_ARG,		AS_PTR_SIZE,  AS_PTR_SIZE*4),
-	asBCINFO(PshC4,		DW_ARG,			1,            4),
-	asBCINFO(PshV4,		rW_ARG,			1,            4),
+	asBCINFO(PshC4,		DW_ARG,			2,            4),
+	asBCINFO(PshV4,		rW_ARG,			2,            4),
 	asBCINFO(PSF,		rW_ARG,			AS_PTR_SIZE,  AS_PTR_SIZE*4),
 	asBCINFO(SwapPtr,	NO_ARG,			0,            AS_PTR_SIZE*4),
 	asBCINFO(NOT,		rW_ARG,			0,            4),
-	asBCINFO(PshG4,		PTR_ARG,		1,            4),
+	asBCINFO(PshG4,		PTR_ARG,		2,            4),
 	asBCINFO(LdGRdR4,	wW_PTR_ARG,		0,            4),
 	asBCINFO(CALL,		DW_ARG,			0xFFFF,       0),
 	asBCINFO(RET,		W_ARG,			0xFFFF,       0),
@@ -5377,7 +5469,7 @@ const asSBCInfo asBCInfo[256] =
 	asBCINFO(PshNull,	NO_ARG,			AS_PTR_SIZE,  AS_PTR_SIZE*4),
 	asBCINFO(ClrVPtr,	wW_ARG,			0,            AS_PTR_SIZE*4),
 	asBCINFO(OBJTYPE,	PTR_ARG,		AS_PTR_SIZE,  AS_PTR_SIZE*4),
-	asBCINFO(TYPEID,	DW_ARG,			1,            4),
+	asBCINFO(TYPEID,	DW_ARG,			2,            4),
 	asBCINFO(SetV4,		wW_DW_ARG,		0,            4),
 	asBCINFO(SetV8,		wW_QW_ARG,		0,            8),
 	asBCINFO(ADDSi,		W_DW_ARG,		0,            4),
@@ -5501,7 +5593,7 @@ const asSBCInfo asBCInfo[256] =
 	asBCINFO(POWdi,		wW_rW_rW_ARG,	0,            8),
 	asBCINFO(POWi64,	wW_rW_rW_ARG,	0,            8),
 	asBCINFO(POWu64,	wW_rW_rW_ARG,	0,            8),
-	asBCINFO(Thiscall1, DW_ARG,			-AS_PTR_SIZE-1, 0),
+	asBCINFO(Thiscall1, DW_ARG,			-AS_PTR_SIZE-2, 0),
 
 	asBCINFO_DUMMY(201),
 	asBCINFO_DUMMY(202),
