@@ -1987,11 +1987,11 @@ int asCContext::GetLineNumber(asUINT stackLevel, int *column, const char **secti
 bool asCContext::ReserveStackSpace(asUINT size)
 {
 #ifdef WIP_16BYTE_ALIGN
-	// Pad size to a multiple of MAX_TYPE_ALIGNMENT.
-	const asUINT remainder = size % MAX_TYPE_ALIGNMENT;
+	// Pad size to a multiple of AS_MAX_TYPE_ALIGNMENT.
+	const asUINT remainder = size % AS_MAX_TYPE_ALIGNMENT;
 	if(remainder != 0)
 	{
-		size = size + (MAX_TYPE_ALIGNMENT - (size % MAX_TYPE_ALIGNMENT));
+		size = size + (AS_MAX_TYPE_ALIGNMENT - (size % AS_MAX_TYPE_ALIGNMENT));
 	}
 #endif
 
@@ -2004,7 +2004,7 @@ bool asCContext::ReserveStackSpace(asUINT size)
 #ifndef WIP_16BYTE_ALIGN
 		asDWORD *stack = asNEWARRAY(asDWORD,m_stackBlockSize);
 #else
-		asDWORD *stack = asNEWARRAYALIGNED(asDWORD, m_stackBlockSize, MAX_TYPE_ALIGNMENT);
+		asDWORD *stack = asNEWARRAYALIGNED(asDWORD, m_stackBlockSize, AS_MAX_TYPE_ALIGNMENT);
 #endif
 		if( stack == 0 )
 		{
@@ -2013,7 +2013,7 @@ bool asCContext::ReserveStackSpace(asUINT size)
 		}
 
 #ifdef WIP_16BYTE_ALIGN
-		asASSERT( isAligned(stack, MAX_TYPE_ALIGNMENT) );
+		asASSERT( isAligned(stack, AS_MAX_TYPE_ALIGNMENT) );
 #endif
 
 		m_stackBlocks.PushLast(stack);
@@ -2022,9 +2022,9 @@ bool asCContext::ReserveStackSpace(asUINT size)
 
 #ifdef WIP_16BYTE_ALIGN
 		// Align the stack pointer. This is necessary as the m_stackBlockSize is not necessarily evenly divisable with the max alignment
-		((asPWORD&)m_regs.stackPointer) &= ~(MAX_TYPE_ALIGNMENT-1);
+		((asPWORD&)m_regs.stackPointer) &= ~(AS_MAX_TYPE_ALIGNMENT-1);
 
-		asASSERT( isAligned(m_regs.stackPointer, MAX_TYPE_ALIGNMENT) );
+		asASSERT( isAligned(m_regs.stackPointer, AS_MAX_TYPE_ALIGNMENT) );
 #endif
 	}
 
@@ -2055,7 +2055,7 @@ bool asCContext::ReserveStackSpace(asUINT size)
 #ifndef WIP_16BYTE_ALIGN
 			asDWORD *stack = asNEWARRAY(asDWORD, (m_stackBlockSize << m_stackIndex));
 #else
-			asDWORD *stack = asNEWARRAYALIGNED(asDWORD, (m_stackBlockSize << m_stackIndex), MAX_TYPE_ALIGNMENT);
+			asDWORD *stack = asNEWARRAYALIGNED(asDWORD, (m_stackBlockSize << m_stackIndex), AS_MAX_TYPE_ALIGNMENT);
 #endif
 			if( stack == 0 )
 			{
@@ -2070,7 +2070,7 @@ bool asCContext::ReserveStackSpace(asUINT size)
 			}
 
 #ifdef WIP_16BYTE_ALIGN
-			asASSERT( isAligned(stack, MAX_TYPE_ALIGNMENT) );
+			asASSERT( isAligned(stack, AS_MAX_TYPE_ALIGNMENT) );
 #endif
 
 			m_stackBlocks.PushLast(stack);
@@ -2086,9 +2086,9 @@ bool asCContext::ReserveStackSpace(asUINT size)
 
 #ifdef WIP_16BYTE_ALIGN
 		// Align the stack pointer
-		(asPWORD&)m_regs.stackPointer &= ~(MAX_TYPE_ALIGNMENT-1);
+		(asPWORD&)m_regs.stackPointer &= ~(AS_MAX_TYPE_ALIGNMENT-1);
 
-		asASSERT( isAligned(m_regs.stackPointer, MAX_TYPE_ALIGNMENT) );
+		asASSERT( isAligned(m_regs.stackPointer, AS_MAX_TYPE_ALIGNMENT) );
 #endif
 	}
 
@@ -4675,11 +4675,19 @@ static const void *const dispatch_table[256] = {
 
 			asUINT size = asBC_DWORDARG(l_bc);
 			asBYTE **var = (asBYTE**)(l_fp - asBC_SWORDARG0(l_bc));
-#ifndef WIP_16BYTE_ALIGN
-			*var = asNEWARRAY(asBYTE, size);
-#else
-			*var = asNEWARRAYALIGNED(asBYTE, size, MAX_TYPE_ALIGNMENT);
-#endif
+
+			// The list buffer holds objects, so it is allocated with the same memory functions
+			// as objects. It is freed with CallFree when the list pattern variable is destroyed
+			*var = (asBYTE*)m_engine->CallAlloc(size, AS_MAX_TYPE_ALIGNMENT);
+			if( *var == 0 )
+			{
+				m_regs.programPointer    = l_bc;
+				m_regs.stackPointer      = l_sp;
+				m_regs.stackFramePointer = l_fp;
+
+				SetInternalException(TXT_OUT_OF_MEMORY);
+				return;
+			}
 
 			// Clear the buffer for the pointers that will be placed in it
 			memset(*var, 0, size);
@@ -5934,6 +5942,7 @@ int asCContext::CallGeneric(asCScriptFunction *descr)
 
 	asCGeneric& gen = descr->IsVariadic() ? genVar : genOrdinary;
 
+	bool cppException = false;
 	m_callingSystemFunction = descr;
 #ifdef AS_NO_EXCEPTIONS
 	func(&gen);
@@ -5946,6 +5955,8 @@ int asCContext::CallGeneric(asCScriptFunction *descr)
 	}
 	catch (...)
 	{
+		cppException = true;
+
 		// Convert the exception to a script exception so the VM can
 		// properly report the error to the application and then clean up
 		HandleAppException();
@@ -5973,6 +5984,16 @@ int asCContext::CallGeneric(asCScriptFunction *descr)
 		else if( CastToObjectType(descr->returnType.GetTypeInfo())->beh.release )
 			m_engine->CallObjectMethod(m_regs.objectRegister, CastToObjectType(descr->returnType.GetTypeInfo())->beh.release);
 		m_regs.objectRegister = 0;
+	}
+
+	// Destroy the returned value if there is an exception, same as for native calls. The caller
+	// will not destroy it as the value is only considered alive after the call returns. If a C++
+	// exception was thrown the construction may not have completed, so the value is left alone.
+	if( m_status == asEXECUTION_EXCEPTION && !cppException && gen.returnValueConstructed && descr->DoesReturnOnStack() )
+	{
+		asCObjectType *ot = CastToObjectType(descr->returnType.GetTypeInfo());
+		if( ot->beh.destruct )
+			m_engine->CallObjectMethod(gen.GetAddressOfReturnLocation(), ot->beh.destruct);
 	}
 
 	// Clean up arguments
