@@ -59,6 +59,7 @@ bool TestVector3();
 
 namespace TestLiteral           { bool Test(); }
 namespace TestForEach           { bool Test(); }
+namespace TestAlignment         { bool Test(); }
 namespace TestException         { bool Test(); }
 namespace TestCDeclReturn       { bool Test(); }
 namespace TestCustomMem         { bool Test(); }
@@ -232,6 +233,9 @@ static int g_numFailedTests = 0;
 
 int allTests()
 {
+	// Don't buffer the output, so it is not lost if a test crashes
+	setvbuf(stdout, 0, _IONBF, 0);
+
 	PRINTF("AngelScript version: %s\n", asGetLibraryVersion());
 	PRINTF("AngelScript options: %s\n", asGetLibraryOptions());
 
@@ -274,6 +278,7 @@ int allTests()
 		RUN_TEST( Test_Addon_ScriptSocket::Test(), "Test_Addon_ScriptSocket" );
 #endif
 
+		RUN_TEST( TestAlignment::Test(), "TestAlignment" );
 		RUN_TEST( TestLiteral::Test(), "TestLiteral" );
 		RUN_TEST( TestForEach::Test(), "TestForEach" );
 		RUN_TEST( TestContext::Test(), "TestContext" );

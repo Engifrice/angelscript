@@ -343,8 +343,9 @@ public:
 									// If stored on the heap the memory needs to be allocated
 									var = ctx->GetAddressOfVar(v, n, true, true);
 
-									// Allocate memory for the string on the heap and set the variable to refer to it
-									*reinterpret_cast<std::string**>(var) = reinterpret_cast<std::string*>(asAllocMem(sizeof(std::string)));
+									// Allocate memory for the string on the heap and set the variable to refer to it.
+									// The memory must come from the engine, as it will free it with the object memory functions
+									*reinterpret_cast<std::string**>(var) = reinterpret_cast<std::string*>(ctx->GetEngine()->AllocateObjectMemory(ctx->GetEngine()->GetTypeInfoById(typeId)));
 
 									var = *reinterpret_cast<void**>(var);
 								}

@@ -871,13 +871,12 @@ SKIP_ON_MAX_PORT
 		engine->ShutDownAndRelease();
 	}
 
-	// Testing the asOBJ_APP_ALIGN16 flag
-	if( strstr(asGetLibraryOptions(), "WIP_16BYTE_ALIGN") )
+	// Testing registration with an explicit 16 byte alignment
 	{
 		engine = asCreateScriptEngine(ANGELSCRIPT_VERSION);
 		engine->SetMessageCallback(asMETHOD(COutStream, Callback), &out, asCALL_THISCALL);
 
-		r = engine->RegisterObjectType("type16", 16, asOBJ_VALUE | asOBJ_POD | asOBJ_APP_FLOAT | asOBJ_APP_ALIGN16);
+		r = engine->RegisterObjectType("type16", 16, 16, asOBJ_VALUE | asOBJ_POD | asOBJ_APP_FLOAT);
 		if( r < 0 )
 			TEST_FAILED;
 
