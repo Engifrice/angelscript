@@ -545,23 +545,17 @@ asCObjectProperty *asCObjectType::AddPropertyToClass(const asCString &propName, 
 	else
 		propSize = dt.GetSizeInMemoryBytes();
 
-	// Add extra bytes so that the property will be properly aligned
-#ifndef WIP_16BYTE_ALIGN
-	if( propSize == 2 && (size & 1) ) size += 1;
-	if( propSize > 2 && (size & 3) ) size += 4 - (size & 3);
-#else
-	asUINT alignment = dt.GetAlignment();
-	const asUINT propSizeAlignmentDifference = size & (alignment-1);
-	if( propSizeAlignmentDifference != 0 )
-	{
-		size += (alignment - propSizeAlignmentDifference);
-	}
-
-	asASSERT((size % alignment) == 0);
-#endif
+	// Add extra bytes so that the property will be properly aligned. Properties that
+	// are not stored inline are references, so they get the alignment of a pointer
+	int propAlignment = prop->type.GetAlignment();
+	size = alignOffset(size, propAlignment);
 
 	prop->byteOffset = size;
 	size += propSize;
+
+	// The object must be at least as aligned as its most aligned property
+	if( propAlignment > alignment )
+		alignment = propAlignment;
 
 	properties.PushLast(prop);
 
