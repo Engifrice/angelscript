@@ -51,10 +51,6 @@ asCObjectType::asCObjectType() : asCTypeInfo()
 
 	acceptValueSubType = true;
 	acceptRefSubType   = true;
-
-#ifdef WIP_16BYTE_ALIGN
-	alignment  = 4;
-#endif
 }
 
 asCObjectType::asCObjectType(asCScriptEngine *in_engine) : asCTypeInfo(in_engine)
@@ -63,10 +59,6 @@ asCObjectType::asCObjectType(asCScriptEngine *in_engine) : asCTypeInfo(in_engine
 
 	acceptValueSubType = true;
 	acceptRefSubType = true;
-
-#ifdef WIP_16BYTE_ALIGN
-	alignment  = 4;
-#endif
 }
 
 // interface
