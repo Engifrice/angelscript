@@ -363,6 +363,7 @@
 #define TXT_PREV_FUNC_IS_NAMED_s_TYPE_IS_d               "The function in previous message is named '%s'. The func type is %d"
 #define TXT_RESURRECTING_SCRIPTOBJECT_s                  "The script object of type '%s' is being resurrected illegally during destruction"
 #define TXT_INVALID_BYTECODE_d                           "LoadByteCode failed. The bytecode is invalid. Number of bytes read from stream: %d"
+#define TXT_INCOMPATIBLE_BYTECODE                        "LoadByteCode failed. The bytecode was not saved by a compatible version of the library"
 #define TXT_NO_JIT_IN_FUNC_s                             "Function '%s' appears to have been compiled without JIT entry points"
 #define TXT_ENGINE_REF_COUNT_ERROR_DURING_SHUTDOWN       "Uh oh! The engine's reference count is increasing while it is being destroyed. Make sure references needed for clean-up are immediately released"
 #define TXT_MODULE_IS_IN_USE                             "The module is still in use and cannot be rebuilt. Discard it and request another module"
