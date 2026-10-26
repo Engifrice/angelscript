@@ -194,4 +194,20 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../angelscript/projects/cm
 target_link_libraries(test_feature ${ANGELSCRIPT_LIBRARY_NAME})
 target_include_directories(test_feature PRIVATE ../../../../angelscript/include)
 set_target_properties(test_feature PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/../../bin)
-set_target_properties(test_feature PROPERTIES CXX_STANDARD 11)
+
+# Put the library next to the executable, so it is found when the library is built as a shared library
+set_target_properties(${ANGELSCRIPT_LIBRARY_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/../../bin)
+
+# Some tests recurse deeply, which needs more than the default 1MB stack on Windows when built with sanitizers
+if(MSVC)
+    target_link_options(test_feature PRIVATE /STACK:16777216)
+endif()
+
+# Use C++11 unless another standard is requested, e.g. with -DCMAKE_CXX_STANDARD=20
+if(NOT CMAKE_CXX_STANDARD)
+    set_target_properties(test_feature PROPERTIES CXX_STANDARD 11)
+endif()
+
+# The tests must be executed from the bin directory, as they load files relative to it
+enable_testing()
+add_test(NAME test_feature COMMAND test_feature WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/../../bin)
