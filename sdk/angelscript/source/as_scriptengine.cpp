@@ -115,9 +115,6 @@ AS_API const char * asGetLibraryOptions()
 #ifdef AS_NO_EXCEPTIONS
 		"AS_NO_EXCEPTIONS "
 #endif
-#ifdef WIP_16BYTE_ALIGN
-		"WIP_16BYTE_ALIGN "
-#endif
 #ifdef AS_BIG_ENDIAN
 		"AS_BIG_ENDIAN "
 #endif
@@ -712,6 +709,10 @@ asCScriptEngine::asCScriptEngine()
 
 	gc.engine = this;
 	tok.engine = this;
+
+	objectAllocFunc       = defaultAlignedAlloc;
+	objectFreeFunc        = defaultAlignedFree;
+	objectMemoryUserParam = 0;
 
 	refCount.set(1);
 	stringFactory = 0;
@@ -1817,7 +1818,22 @@ asCTypeInfo* asCScriptEngine::GetTemplateSubTypeByName(const asCString &name)
 	return subtype;
 }
 
+// interface
 int asCScriptEngine::RegisterObjectType(const char *name, int byteSize, asQWORD flags)
+{
+	// A type's size is always a multiple of its alignment, so the largest power of two that divides
+	// the size is the highest alignment the type can have. Types with alignment higher than 8 are
+	// rare, and must be registered with the explicit alignment so they don't impose padding on others.
+	// Reference types are allocated by the application, so their alignment is only informative.
+	int alignment = byteSize > 0 ? (byteSize & -byteSize) : (int)sizeof(void*);
+	if( alignment > 8 )
+		alignment = 8;
+
+	return RegisterObjectType(name, byteSize, alignment, flags);
+}
+
+// interface
+int asCScriptEngine::RegisterObjectType(const char *name, int byteSize, int alignment, asQWORD flags)
 {
 	int r;
 
@@ -1903,17 +1919,31 @@ int asCScriptEngine::RegisterObjectType(const char *name, int byteSize, asQWORD 
 		return ConfigError(asINVALID_ARG, "RegisterObjectType", name, 0);
 
 	// Don't allow anything else than the defined flags
-#ifndef WIP_16BYTE_ALIGN
 	if( flags - (flags & asOBJ_MASK_VALID_FLAGS) )
-#else
-	if( flags - (flags & (asOBJ_MASK_VALID_FLAGS | asOBJ_APP_ALIGN16)) )
-#endif
 		return ConfigError(asINVALID_ARG, "RegisterObjectType", name, 0);
 
 	// Value types must have a defined size
 	if( (flags & asOBJ_VALUE) && byteSize == 0 )
 	{
 		WriteMessage("", 0, 0, asMSGTYPE_ERROR, TXT_VALUE_TYPE_MUST_HAVE_SIZE);
+		return ConfigError(asINVALID_ARG, "RegisterObjectType", name, 0);
+	}
+
+	// The alignment must be a power of two within the supported range
+	if( alignment <= 0 || (alignment & (alignment - 1)) != 0 || asUINT(alignment) > AS_MAX_TYPE_ALIGNMENT )
+	{
+		asCString str;
+		str.Format(TXT_INVALID_ALIGNMENT_d_d, alignment, AS_MAX_TYPE_ALIGNMENT);
+		WriteMessage("", 0, 0, asMSGTYPE_ERROR, str.AddressOf());
+		return ConfigError(asINVALID_ARG, "RegisterObjectType", name, 0);
+	}
+
+	// The size must be a multiple of the alignment, as instances may be placed one after the other
+	if( byteSize < 0 || (byteSize % alignment) != 0 )
+	{
+		asCString str;
+		str.Format(TXT_SIZE_d_NOT_MULTIPLE_OF_ALIGNMENT_d, byteSize, alignment);
+		WriteMessage("", 0, 0, asMSGTYPE_ERROR, str.AddressOf());
 		return ConfigError(asINVALID_ARG, "RegisterObjectType", name, 0);
 	}
 
@@ -1942,10 +1972,7 @@ int asCScriptEngine::RegisterObjectType(const char *name, int byteSize, asQWORD 
 		type->name       = typeName;
 		type->nameSpace  = defaultNamespace;
 		type->size       = byteSize;
-#ifdef WIP_16BYTE_ALIGN
-		// TODO: Types smaller than 4 don't need to be aligned to 4 byte boundaries
-		type->alignment  = (flags & asOBJ_APP_ALIGN16) ? 16 : 4;
-#endif
+		type->alignment  = alignment;
 		type->flags      = flags;
 		type->accessMask = defaultAccessMask;
 
@@ -2012,10 +2039,7 @@ int asCScriptEngine::RegisterObjectType(const char *name, int byteSize, asQWORD 
 			type->name       = typeName;
 			type->nameSpace  = defaultNamespace;
 			type->size       = byteSize;
-#ifdef WIP_16BYTE_ALIGN
-			// TODO: Types smaller than 4 don't need to be aligned to 4 byte boundaries
-			type->alignment  = (flags & asOBJ_APP_ALIGN16) ? 16 : 4;
-#endif
+			type->alignment  = alignment;
 			type->flags      = flags;
 			type->accessMask = defaultAccessMask;
 
@@ -2074,10 +2098,7 @@ int asCScriptEngine::RegisterObjectType(const char *name, int byteSize, asQWORD 
 					type->templateSubTypes[s].GetTypeInfo()->AddRefInternal();
 			}
 			type->size       = byteSize;
-#ifdef WIP_16BYTE_ALIGN
-			// TODO: Types smaller than 4 don't need to be aligned to 4 byte boundaries
-			type->alignment  = (flags & asOBJ_APP_ALIGN16) ? 16 : 4;
-#endif
+			type->alignment  = alignment;
 			type->flags      = flags;
 			type->accessMask = defaultAccessMask;
 
@@ -3739,6 +3760,7 @@ asCObjectType *asCScriptEngine::GetTemplateInstanceType(asCObjectType *templateT
 	ot->templateSubTypes = subTypes;
 	ot->flags            = templateType->flags;
 	ot->size             = templateType->size;
+	ot->alignment        = templateType->alignment;
 	ot->name             = templateType->name;
 	ot->nameSpace        = templateType->nameSpace;
 
@@ -5111,28 +5133,42 @@ void *asCScriptEngine::CallAlloc(const asCObjectType *type) const
 	if( size & 0x3 )
 		size += 4 - (size & 0x3);
 
-#ifndef WIP_16BYTE_ALIGN
-#if defined(AS_DEBUG)
-	return ((asALLOCFUNCDEBUG_t)userAlloc)(size, __FILE__, __LINE__);
-#else
-	return userAlloc(size);
-#endif
-#else
-#if defined(AS_DEBUG)
-	return ((asALLOCALIGNEDFUNCDEBUG_t)userAllocAligned)(size, type->alignment, __FILE__, __LINE__);
-#else
-	return userAllocAligned(size, type->alignment);
-#endif
-#endif
+	return CallAlloc(size, type->alignment);
+}
+
+void *asCScriptEngine::CallAlloc(asUINT size, asUINT alignment) const
+{
+	// The memory may be accessed a DWORD at a time, so align it to at least 4 bytes
+	if( alignment < 4 )
+		alignment = 4;
+
+	return objectAllocFunc(size, alignment, objectMemoryUserParam);
 }
 
 void asCScriptEngine::CallFree(void *obj) const
 {
-#ifndef WIP_16BYTE_ALIGN
-	userFree(obj);
-#else
-	userFreeAligned(obj);
-#endif
+	objectFreeFunc(obj, objectMemoryUserParam);
+}
+
+// interface
+int asCScriptEngine::SetObjectMemoryFunctions(asALLOCALIGNEDFUNC_t allocFunc, asFREEALIGNEDFUNC_t freeFunc, void *userParam)
+{
+	// Both functions must be informed, or none to restore the default functions
+	if( (allocFunc == 0) != (freeFunc == 0) )
+		return asINVALID_ARG;
+
+	if( allocFunc == 0 )
+	{
+		allocFunc = defaultAlignedAlloc;
+		freeFunc  = defaultAlignedFree;
+		userParam = 0;
+	}
+
+	objectAllocFunc       = allocFunc;
+	objectFreeFunc        = freeFunc;
+	objectMemoryUserParam = userParam;
+
+	return asSUCCESS;
 }
 
 // interface
@@ -5715,6 +5751,27 @@ void *asCScriptEngine::CreateUninitializedScriptObject(const asITypeInfo *type)
 	ScriptObject_ConstructUnitialized(objType, obj);
 
 	return obj;
+}
+
+// interface
+void *asCScriptEngine::AllocateObjectMemory(const asITypeInfo *type)
+{
+	// Only value types and script classes are allocated by the engine. Reference
+	// types are allocated by the application in their factory functions
+	const asCObjectType *objType = CastToObjectType(const_cast<asCTypeInfo*>(reinterpret_cast<const asCTypeInfo*>(type)));
+	if( objType == 0 || !(objType->flags & (asOBJ_VALUE | asOBJ_SCRIPT_OBJECT)) )
+		return 0;
+
+	// The memory is not initialized. The engine will free it with FreeObjectMemory
+	// after calling the destructor, e.g. when a variable that holds it goes out of scope
+	return CallAlloc(objType);
+}
+
+// interface
+void asCScriptEngine::FreeObjectMemory(void *ptr)
+{
+	if( ptr )
+		CallFree(ptr);
 }
 
 // interface
@@ -6372,6 +6429,7 @@ int asCScriptEngine::RegisterTypedef(const char *type, const char *decl)
 
 	td->flags           = asOBJ_TYPEDEF;
 	td->size            = dataType.GetSizeInMemoryBytes();
+	td->alignment       = dataType.GetAlignment();
 	td->name            = type;
 	td->nameSpace       = defaultNamespace;
 	td->aliasForType    = dataType;
@@ -6453,6 +6511,7 @@ int asCScriptEngine::RegisterEnum(const char* typeName, const char* underlyingTy
 
 	st->flags = asOBJ_ENUM | asOBJ_SHARED;
 	st->size = dataType.GetSizeInMemoryBytes();
+	st->alignment = dataType.GetAlignment();
 	st->name = typeName;
 	st->nameSpace = defaultNamespace;
 	st->enumType = dataType;

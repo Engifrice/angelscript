@@ -73,6 +73,9 @@ public:
 	virtual int Release() const;
 	virtual int ShutDownAndRelease();
 
+	// Memory for instances of registered value types and script classes
+	virtual int SetObjectMemoryFunctions(asALLOCALIGNEDFUNC_t allocFunc, asFREEALIGNEDFUNC_t freeFunc, void *userParam);
+
 	// Engine properties
 	virtual int     SetEngineProperty(asEEngineProp property, asPWORD value);
 	virtual asPWORD GetEngineProperty(asEEngineProp property) const;
@@ -102,6 +105,7 @@ public:
 
 	// Type registration
 	virtual int            RegisterObjectType(const char *obj, int byteSize, asQWORD flags);
+	virtual int            RegisterObjectType(const char *obj, int byteSize, int alignment, asQWORD flags);
 	virtual int            RegisterObjectProperty(const char *obj, const char *declaration, int byteOffset, int compositeOffset = 0, bool isCompositeIndirect = false);
 	virtual int            RegisterObjectMethod(const char *obj, const char *declaration, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false);
 	virtual int            RegisterObjectBehaviour(const char *obj, asEBehaviours behaviour, const char *declaration, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false);
@@ -170,6 +174,8 @@ public:
 	virtual void                  *CreateScriptObject(const asITypeInfo *type);
 	virtual void                  *CreateScriptObjectCopy(void *obj, const asITypeInfo *type);
 	virtual void                  *CreateUninitializedScriptObject(const asITypeInfo *type);
+	virtual void                  *AllocateObjectMemory(const asITypeInfo *type);
+	virtual void                   FreeObjectMemory(void *ptr);
 	virtual asIScriptFunction     *CreateDelegate(asIScriptFunction *func, void *obj);
 	virtual int                    AssignScriptObject(void *dstObj, void *srcObj, const asITypeInfo *type);
 	virtual void                   ReleaseScriptObject(void *obj, const asITypeInfo *type);
@@ -231,7 +237,13 @@ public:
 	int VerifyVarTypeNotInFunction(asCScriptFunction *func);
 
 	void *CallAlloc(const asCObjectType *objType) const;
+	void *CallAlloc(asUINT size, asUINT alignment) const;
 	void  CallFree(void *obj) const;
+
+	// Memory functions used by CallAlloc and CallFree
+	asALLOCALIGNEDFUNC_t objectAllocFunc;
+	asFREEALIGNEDFUNC_t  objectFreeFunc;
+	void                *objectMemoryUserParam;
 
 	void *CallGlobalFunctionRetPtr(int func) const;
 	void *CallGlobalFunctionRetPtr(int func, void *param1) const;
