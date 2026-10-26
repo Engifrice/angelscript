@@ -1,4 +1,5 @@
 #include "utils.h"
+#include "../../../add_on/autowrapper/aswrappedcall.h"
 
 namespace TestContext
 {
@@ -576,9 +577,9 @@ template< typename T > static void DestructorFunc(void* memory)
 
 template< typename T > bool RegisterClassConstructAndDestruct(asIScriptEngine* pEngine, const char* pClassName)
 {
-	auto r = pEngine->RegisterObjectBehaviour(pClassName, asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(ConstructorFunc<T>), asCALL_CDECL_OBJLAST);
+	auto r = pEngine->RegisterObjectBehaviour(pClassName, asBEHAVE_CONSTRUCT, "void f()", WRAP_OBJ_LAST(ConstructorFunc<T>), asCALL_GENERIC);
 	assert(r >= 0);
-	r = pEngine->RegisterObjectBehaviour(pClassName, asBEHAVE_DESTRUCT, "void f()", asFUNCTION(DestructorFunc<T>), asCALL_CDECL_OBJLAST);
+	r = pEngine->RegisterObjectBehaviour(pClassName, asBEHAVE_DESTRUCT, "void f()", WRAP_OBJ_LAST(DestructorFunc<T>), asCALL_GENERIC);
 	assert(r >= 0);
 
 	return true;
@@ -590,7 +591,7 @@ template< typename T > bool RegisterClassOpAssign(asIScriptEngine* pEngine, cons
 	opFunc += "& opAssign(const ";
 	opFunc += pClassName;
 	opFunc += " &in )";
-	auto r = pEngine->RegisterObjectMethod(pClassName, opFunc.c_str(), asMETHODPR(T, operator =, (const T&), T&), asCALL_THISCALL); assert(r >= 0);
+	auto r = pEngine->RegisterObjectMethod(pClassName, opFunc.c_str(), WRAP_MFN_PR(T, operator =, (const T&), T&), asCALL_GENERIC); assert(r >= 0);
 
 	return true;
 }
@@ -613,7 +614,7 @@ bool Test()
 		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
 		bout.buffer = "";
 
-		int func1 = engine->RegisterGlobalFunction("double test1()", asFUNCTION(ReturnDouble), asCALL_CDECL);
+		int func1 = engine->RegisterGlobalFunction("double test1()", WRAP_FN(ReturnDouble), asCALL_GENERIC);
 
 		asIScriptContext *ctx = engine->CreateContext();
 
@@ -627,7 +628,7 @@ bool Test()
 			TEST_FAILED;
 
 		// Function is registered after the context was created
-		int func2 = engine->RegisterGlobalFunction("double test2()", asFUNCTION(ReturnDouble), asCALL_CDECL);
+		int func2 = engine->RegisterGlobalFunction("double test2()", WRAP_FN(ReturnDouble), asCALL_GENERIC);
 
 		ctx->Prepare(engine->GetFunctionById(func2));
 		r = ctx->Execute();
@@ -651,7 +652,6 @@ bool Test()
 
 	// Test reuse of context after the stack has grown
 	// Reported by Doi Hiroshi
-	SKIP_ON_MAX_PORT
 	{
 		auto engine = asCreateScriptEngine();
 

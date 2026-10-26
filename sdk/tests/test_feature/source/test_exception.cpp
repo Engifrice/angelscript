@@ -1,5 +1,6 @@
 #include "utils.h"
 #include <exception>
+#include "../../../add_on/autowrapper/aswrappedcall.h"
 using namespace std;
 
 namespace TestException
@@ -150,9 +151,9 @@ bool Test()
 		bout.buffer = "";
 		RegisterStdString(engine);
 		engine->RegisterObjectType("ApplicationTestClass", 0, asOBJ_REF);
-		engine->RegisterObjectBehaviour("ApplicationTestClass", asBEHAVE_FACTORY, "ApplicationTestClass@ f()", asFUNCTION(ApplicationTestClass::Create), asCALL_CDECL);
-		engine->RegisterObjectBehaviour("ApplicationTestClass", asBEHAVE_ADDREF, "void f()", asMETHOD(ApplicationTestClass, AddRef), asCALL_THISCALL);
-		engine->RegisterObjectBehaviour("ApplicationTestClass", asBEHAVE_RELEASE, "void f()", asMETHOD(ApplicationTestClass, Release), asCALL_THISCALL);
+		engine->RegisterObjectBehaviour("ApplicationTestClass", asBEHAVE_FACTORY, "ApplicationTestClass@ f()", WRAP_FN(ApplicationTestClass::Create), asCALL_GENERIC);
+		engine->RegisterObjectBehaviour("ApplicationTestClass", asBEHAVE_ADDREF, "void f()", WRAP_MFN(ApplicationTestClass, AddRef), asCALL_GENERIC);
+		engine->RegisterObjectBehaviour("ApplicationTestClass", asBEHAVE_RELEASE, "void f()", WRAP_MFN(ApplicationTestClass, Release), asCALL_GENERIC);
 		asIScriptModule* mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
 		mod->AddScriptSection("test",
 			R"(
@@ -202,7 +203,7 @@ bool Test()
 		RegisterStdString(engine);
 		RegisterExceptionRoutines(engine);
 
-		engine->RegisterGlobalFunction("void callAppFunc()", asFUNCTION(callAppFunc), asCALL_CDECL);
+		engine->RegisterGlobalFunction("void callAppFunc()", WRAP_FN(callAppFunc), asCALL_GENERIC);
 		engine->RegisterGlobalFunction("void assert(bool)", asFUNCTION(Assert), asCALL_GENERIC);
 
 		asIScriptModule* mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
