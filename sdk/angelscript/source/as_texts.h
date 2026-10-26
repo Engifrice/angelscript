@@ -329,6 +329,8 @@
 #define TXT_FIRST_PARAM_MUST_BE_REF_FOR_TEMPLATE_FACTORY "First parameter to template factory must be a reference to primitive type. This will be used to pass the object type of the template"
 #define TXT_INVALID_CONFIGURATION                        "Invalid configuration. Verify the registered application interface."
 #define TXT_VALUE_TYPE_MUST_HAVE_SIZE                    "A value type must be registered with a non-zero size"
+#define TXT_INVALID_ALIGNMENT_d_d                        "The alignment %d must be a power of two, and not larger than %d"
+#define TXT_SIZE_d_NOT_MULTIPLE_OF_ALIGNMENT_d           "The size %d must be a multiple of the alignment %d"
 #define TXT_TYPE_s_IS_MISSING_BEHAVIOURS                 "Type '%s' is missing behaviours"
 #define TXT_ILLEGAL_BEHAVIOUR_FOR_TYPE                   "The behaviour is not compatible with the type"
 #define TXT_GC_REQUIRE_ADD_REL_GC_BEHAVIOUR              "A garbage collected ref type must have the addref, release, and all gc behaviours"
@@ -377,6 +379,7 @@
 
 #define TXT_STACK_OVERFLOW                "Stack overflow"
 #define TXT_NULL_POINTER_ACCESS           "Null pointer access"
+#define TXT_OUT_OF_MEMORY                 "Out of memory"
 #define TXT_DIVIDE_BY_ZERO                "Divide by zero"
 #define TXT_DIVIDE_OVERFLOW               "Overflow in integer division"
 #define TXT_POW_OVERFLOW                  "Overflow in exponent operation"
