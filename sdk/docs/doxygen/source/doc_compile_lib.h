@@ -2,6 +2,15 @@
 
 \page doc_compile_lib Compile the library
 
+\note This version of the library has the following requirements, which differ from the official AngelScript library:
+ - Only 64bit platforms are supported. Compiling for a 32bit platform fails with a static assert.
+ - Only the \ref doc_generic "generic calling convention" is supported. The library is always compiled with
+   AS_MAX_PORTABILITY, so the platform specific as_callfunc_*.cpp files and assembler files are not used, and
+   no assembler is needed to compile the library on any platform.
+ - The library must be compiled with C++11 or later.
+ - The CMake project in sdk/angelscript/projects/cmake is the supported project. It defines AS_MAX_PORTABILITY
+   publicly, so applications linking with it see the same configuration.
+
 In the sdk/angelscript/projects directory you'll find project files for many of the popular compilers. 
 However, these project files are not always up to date with the latest version of the library. If you get 
 any compiler or linker errors please make sure the project file include all the files in the 
@@ -142,17 +151,6 @@ As mentioned before, for most platforms the compilation of the library is as eas
 source files and compiling them. However, on some platforms specific actions needs to be performed
 to compile the library correctly.
 
-\subsection doc_compile_win64 Windows 64bit
-
-The MSVC compiler doesn't support inline assembler for the x86 64bit CPU family. To support this platform a
-separate assembler file has been created: as_callfunc_x64_msvc_asm.asm.
-
-To compile this file it is necessary to configure a custom build command with the following:
-
-\code
-ml64.exe /c  /nologo /Fo$(OutDir)\as_callfunc_x64_msvc_asm.obj /W3 /Zi /Ta $(InputDir)\$(InputFileName)
-\endcode
-
 \subsection doc_compile_msvc_sdk Microsoft Visual C++
 
 While AngelScript doesn't use Microsoft's language extensions you may still face trouble compiling the library
@@ -173,27 +171,6 @@ Use the following compiler argument to disable this:
 \code
 -fno-strict-aliasing
 \endcode
-
-\subsection doc_compile_pocketpc Pocket PC with ARM CPU
-
-The MSVC compiler doesn't support inline assembler for the ARM CPU, so a separate assembler file has been 
-written with this code: as_callfunc_arm_msvc.asm.
-
-In order to compile this file properly it is necessary to configure a custom build command with the following:
-
-\code
-armasm -g $(InputPath)
-\endcode
-
-\subsection doc_compile_marmalade Marmalade
-
-Marmalade is a cross platform SDK created with mobile devices in mind. It functions by abstracting the underlying OS
-with its own C runtime library even though it uses the common C++ compilers, e.g. MSVC on Windows, and GNUC on Linux and Mac.
-
-When compiling AngelScript with Marmalade for iOS and Android scons must be used in order to properly 
-compile the native ARM assembler routines. For Windows Phone you should be able to use MSVC normally.
-
-
 
 \section doc_compile_size Size of the library
 

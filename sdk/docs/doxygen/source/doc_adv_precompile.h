@@ -75,14 +75,17 @@ protected:
    to compile scripts with external shared entities, the offline compiler must first build another module with all the 
    shared entities that should be allowed to be declared as external.
 
- - The saved bytecode is platform independent with only a couple of exceptions that is unlikely to affect 
-   application developers. The exceptions are 1) difference in size of primitive types (e.g. bool on older
-   Mac PPC platforms) and 2) CPU floating point representation (i.e. IEEE 754 versus non-IEEE 754). Differences
-   in pointer size (32bit vs 64bit), CPU endianess, different size of registered types and offsets of registered
-   properties are all handled to provide platform independence.
+ - The saved bytecode is platform independent among the supported 64bit platforms, with the exception of the
+   CPU floating point representation (i.e. IEEE 754 versus non-IEEE 754). CPU endianess, different sizes and
+   alignments of registered types, and offsets of registered properties are all handled to provide platform
+   independence. The layout of the local variables and script class members is recomputed when the bytecode
+   is loaded, using the sizes and alignments of the types as registered on the platform that loads it.
 
- - The saved bytecode is not guaranteed to be compatible for different versions of the AngelScript library so
-   make sure you use the same library version when saving the bytecode that will be used when loading it.
+ - The saved bytecode starts with an identifier and a version of the bytecode format. Bytecode saved by
+   an incompatible version of the library is rejected when loading it, with the message "The bytecode was
+   not saved by a compatible version of the library". The bytecode is not guaranteed to be compatible for
+   different versions of the AngelScript library, so make sure you use the same library version when saving
+   the bytecode that will be used when loading it.
 
 
 

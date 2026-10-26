@@ -142,7 +142,18 @@ or many small allocations. AngelScript aids these applications as well as it
 is possible to register custom memory allocation routines with the library,
 giving the application exact control over the memory used by AngelScript.
 
-\see \ref asSetGlobalMemoryFunctions
+The memory for instances of registered value types and script classes can be controlled
+separately for each engine with \ref asIScriptEngine::SetObjectMemoryFunctions "SetObjectMemoryFunctions".
+These functions receive the alignment of the object together with the size, and a user
+parameter that can be used to refer to an allocator object. By default these objects are
+allocated with the global memory functions, aligned to the alignment of the type.
+
+When the application provides memory that the engine will later free, e.g. when restoring
+a local variable while deserializing a context, the memory must be allocated with
+\ref asIScriptEngine::AllocateObjectMemory "AllocateObjectMemory" so it comes from the
+same functions.
+
+\see \ref asSetGlobalMemoryFunctions, \ref asIScriptEngine::SetObjectMemoryFunctions
 
 
 */
