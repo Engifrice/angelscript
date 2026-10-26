@@ -47,6 +47,7 @@ struct alignas(16) Vec16
 };
 
 static int g_misalignedVec16 = 0;
+static int g_aliveVec16 = 0;
 
 static void Vec16_Construct(asIScriptGeneric *gen)
 {
@@ -54,11 +55,22 @@ static void Vec16_Construct(asIScriptGeneric *gen)
 	if( (uintptr_t)self % 16 )
 		g_misalignedVec16++;
 	new(self) Vec16();
+	g_aliveVec16++;
+}
+
+static void Vec16_CopyConstruct(asIScriptGeneric *gen)
+{
+	void *self = gen->GetObject();
+	if( (uintptr_t)self % 16 )
+		g_misalignedVec16++;
+	new(self) Vec16(*(Vec16*)gen->GetArgObject(0));
+	g_aliveVec16++;
 }
 
 static void Vec16_Destruct(asIScriptGeneric *gen)
 {
 	((Vec16*)gen->GetObject())->~Vec16();
+	g_aliveVec16--;
 }
 
 static void Vec16_Assign(asIScriptGeneric *gen)
@@ -92,6 +104,7 @@ static int RegisterVec16(asIScriptEngine *engine)
 {
 	int r = engine->RegisterObjectType("vec16", (int)sizeof(Vec16), (int)alignof(Vec16), asOBJ_VALUE | asOBJ_APP_CLASS_CD); if( r < 0 ) return r;
 	r = engine->RegisterObjectBehaviour("vec16", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(Vec16_Construct), asCALL_GENERIC); if( r < 0 ) return r;
+	r = engine->RegisterObjectBehaviour("vec16", asBEHAVE_CONSTRUCT, "void f(const vec16 &in)", asFUNCTION(Vec16_CopyConstruct), asCALL_GENERIC); if( r < 0 ) return r;
 	r = engine->RegisterObjectBehaviour("vec16", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(Vec16_Destruct), asCALL_GENERIC); if( r < 0 ) return r;
 	r = engine->RegisterObjectMethod("vec16", "vec16 &opAssign(const vec16 &in)", asFUNCTION(Vec16_Assign), asCALL_GENERIC); if( r < 0 ) return r;
 	return 0;
@@ -110,6 +123,63 @@ static const char *heapScript =
 	"  Holder @h = Holder(); \n"
 	"  Holder @h2 = Holder(); \n"
 	"}                   \n";
+
+// Counts arguments that are not aligned or have unexpected values when received by generic functions
+static int g_badArgs = 0;
+
+// void checkArgs(int8, double, int, int64, float, const pod16 &in, const vec16 &in)
+static void CheckArgs_Generic(asIScriptGeneric *gen)
+{
+	// All values on the stack are aligned to 8 bytes
+	for( int n = 0; n < gen->GetArgCount(); n++ )
+		if( (uintptr_t)gen->GetAddressOfArg(n) % 8 )
+			g_badArgs++;
+
+	if( gen->GetArgByte(0) != 1 ) g_badArgs++;
+	if( gen->GetArgDouble(1) != 2.5 ) g_badArgs++;
+	if( gen->GetArgDWord(2) != 3 ) g_badArgs++;
+	if( gen->GetArgQWord(3) != 4 ) g_badArgs++;
+	if( gen->GetArgFloat(4) != 5.5f ) g_badArgs++;
+
+	// The objects referred to are aligned to their own alignment
+	if( (uintptr_t)gen->GetArgAddress(5) % 16 ) g_badArgs++;
+	if( (uintptr_t)gen->GetArgAddress(6) % 16 ) g_badArgs++;
+}
+
+// void checkVarArg(const ?&in), the reference and the type id each take up a slot
+static void CheckVarArg_Generic(asIScriptGeneric *gen)
+{
+	if( (uintptr_t)gen->GetAddressOfArg(0) % 8 )
+		g_badArgs++;
+	if( gen->GetArgTypeId(0) != asTYPEID_DOUBLE || *(double*)gen->GetArgAddress(0) != 2.5 )
+		g_badArgs++;
+}
+
+// void checkPod(const pod16 &in)
+static void CheckPod_Generic(asIScriptGeneric *gen)
+{
+	if( (uintptr_t)gen->GetArgAddress(0) % 16 )
+		g_badArgs++;
+}
+
+// void checkDouble(double &out), the referred variable is a local variable aligned to 8 bytes
+static void CheckDouble_Generic(asIScriptGeneric *gen)
+{
+	double *d = (double*)gen->GetArgAddress(0);
+	if( (uintptr_t)d % 8 )
+		g_badArgs++;
+	*d = 1.5;
+}
+
+// vec16 genVec(), constructs the returned value directly in the return location
+static void GenVec_Generic(asIScriptGeneric *gen)
+{
+	void *mem = gen->GetAddressOfReturnLocation();
+	if( (uintptr_t)mem % 16 )
+		g_misalignedVec16++;
+	new(mem) Vec16();
+	g_aliveVec16++;
+}
 
 // Returns the alignment of the type, or 0 if the type doesn't exist
 static asUINT AlignmentOf(asITypeInfo *type, const char *name)
@@ -590,6 +660,130 @@ bool Test()
 		{
 			PRINTF("%d vec16 instances were not aligned after loading\n", g_misalignedVec16);
 			TEST_FAILED;
+		}
+
+		if( bout.buffer != "" )
+		{
+			PRINTF("%s", bout.buffer.c_str());
+			TEST_FAILED;
+		}
+
+		engine->ShutDownAndRelease();
+	}
+
+	// Local variables, arguments and return values on the script stack are aligned
+	{
+		engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+
+		r = engine->RegisterObjectType("pod16", (int)sizeof(Pod16), (int)alignof(Pod16), asOBJ_VALUE | asOBJ_POD);
+		if( r < 0 )
+			TEST_FAILED;
+		RegisterVec16(engine);
+		engine->RegisterGlobalFunction("void checkArgs(int8, double, int, int64, float, const pod16 &in, const vec16 &in)", asFUNCTION(CheckArgs_Generic), asCALL_GENERIC);
+		engine->RegisterGlobalFunction("void checkVarArg(const ?&in)", asFUNCTION(CheckVarArg_Generic), asCALL_GENERIC);
+		engine->RegisterGlobalFunction("void checkPod(const pod16 &in)", asFUNCTION(CheckPod_Generic), asCALL_GENERIC);
+		engine->RegisterGlobalFunction("void checkDouble(double &out)", asFUNCTION(CheckDouble_Generic), asCALL_GENERIC);
+		engine->RegisterGlobalFunction("vec16 genVec()", asFUNCTION(GenVec_Generic), asCALL_GENERIC);
+		engine->RegisterGlobalFunction("void assert(bool)", asFUNCTION(Assert), asCALL_GENERIC);
+
+		const char *script =
+			"class Obj { int v; } \n"
+			"vec16 makeVec() { vec16 v; return v; } \n"
+			// The number and size of the arguments vary between the functions, so the frames
+			// start at different positions, which requires the arguments to be moved to align them
+			"void level(int depth, int8 pad) \n"
+			"{ \n"
+			"  int8 a = 1; \n"
+			"  vec16 v; \n"
+			"  double d = 2; \n"
+			"  pod16 p; \n"
+			"  checkPod(p); \n"
+			"  vec16 r = makeVec(); \n"
+			"  vec16 g = genVec(); \n"
+			"  checkArgs(1, 2.5, 3, 4, 5.5f, p, v); \n"
+			"  checkVarArg(2.5); \n"
+			"  double o; \n"
+			"  checkDouble(o); \n"
+			"  assert( o == 1.5 ); \n"
+			"  if( depth > 0 ) \n"
+			"  { \n"
+			"    if( depth % 2 == 0 ) level(depth - 1, a); \n"
+			"    else level2(depth - 1); \n"
+			"  } \n"
+			"} \n"
+			"void level2(int depth) { int8 x = 1; vec16 v; level(depth, x); } \n"
+			"void main() { level(10, 0); } \n"
+			// Deep recursion moves the frames to new stack blocks
+			"void deep(int depth) { vec16 v; if( depth > 0 ) deep(depth - 1); } \n"
+			"void runDeep() { deep(500); } \n"
+			// Exceptions must clean up the values in the realigned frames
+			"void fail(int depth, int8 pad) { vec16 v; if( depth == 0 ) { Obj @o; o.v = 1; } else fail(depth - 1, pad); } \n"
+			"void runFail() { try { fail(5, 1); } catch {} fail(3, 1); } \n";
+
+		asIScriptModule *mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
+		mod->AddScriptSection("test", script);
+		r = mod->Build();
+		if( r < 0 )
+			TEST_FAILED;
+
+		// Run the same tests before and after saving and loading the bytecode
+		CBytecodeStream stream("test");
+		for( int pass = 0; pass < 2 && !fail; pass++ )
+		{
+			if( pass == 1 )
+			{
+				r = mod->SaveByteCode(&stream);
+				if( r < 0 )
+					TEST_FAILED;
+				mod = engine->GetModule("loaded", asGM_ALWAYS_CREATE);
+				r = mod->LoadByteCode(&stream);
+				if( r < 0 )
+					TEST_FAILED;
+			}
+
+			g_misalignedVec16 = 0;
+			g_aliveVec16 = 0;
+			g_badArgs = 0;
+
+			r = ExecuteString(engine, "main()", mod);
+			if( r != asEXECUTION_FINISHED )
+				TEST_FAILED;
+			r = ExecuteString(engine, "runDeep()", mod);
+			if( r != asEXECUTION_FINISHED )
+				TEST_FAILED;
+			r = ExecuteString(engine, "runFail()", mod);
+			if( r != asEXECUTION_EXCEPTION )
+				TEST_FAILED;
+
+			// The application calling a script function that returns a value type
+			asIScriptContext *ctx = engine->CreateContext();
+			r = ctx->Prepare(mod->GetFunctionByName("makeVec"));
+			if( r < 0 )
+				TEST_FAILED;
+			r = ctx->Execute();
+			if( r != asEXECUTION_FINISHED )
+				TEST_FAILED;
+			if( (uintptr_t)ctx->GetReturnObject() % 16 )
+				g_misalignedVec16++;
+			ctx->Release();
+
+			if( g_misalignedVec16 != 0 )
+			{
+				PRINTF("%d vec16 instances were not aligned (pass %d)\n", g_misalignedVec16, pass);
+				TEST_FAILED;
+			}
+			if( g_badArgs != 0 )
+			{
+				PRINTF("%d arguments were not aligned or had wrong values (pass %d)\n", g_badArgs, pass);
+				TEST_FAILED;
+			}
+			if( g_aliveVec16 != 0 )
+			{
+				PRINTF("%d vec16 instances were not destroyed (pass %d)\n", g_aliveVec16, pass);
+				TEST_FAILED;
+			}
 		}
 
 		if( bout.buffer != "" )
