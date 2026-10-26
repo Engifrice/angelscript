@@ -56,6 +56,7 @@ asCGeneric::asCGeneric(asCScriptEngine *engine, asCScriptFunction *sysFunction, 
 	
 	objectRegister = 0;
 	returnVal = 0;
+	returnValueConstructed = false;
 }
 
 // internal
@@ -479,6 +480,7 @@ int asCGeneric::SetReturnObject(void *obj)
 		// or the default constructor followed by the assignment operator
 		void *mem = (void*)*(asPWORD*)&stackPointer[-AS_PTR_SIZE];
 		engine->ConstructScriptObjectCopy(mem, obj, CastToObjectType(dt->GetTypeInfo()));
+		returnValueConstructed = true;
 		return 0;
 	}
 
@@ -513,6 +515,9 @@ void *asCGeneric::GetAddressOfReturnLocation()
 	{
 		if( sysFunction->DoesReturnOnStack() )
 		{
+			// The function is expected to construct the value in this location
+			returnValueConstructed = true;
+
 			// The memory is already preallocated on the stack,
 			// and the pointer to the location is found before the first arg
 			return (void*)*(asPWORD*)&stackPointer[-AS_PTR_SIZE];
@@ -708,6 +713,9 @@ void* asCGenericVariadic::GetAddressOfReturnLocation()
 	{
 		if (sysFunction->DoesReturnOnStack())
 		{
+			// The function is expected to construct the value in this location
+			returnValueConstructed = true;
+
 			// The memory is already preallocated on the stack,
 			// and the pointer to the location is found before the first arg
 			return (void*)*(asPWORD*)&stackPointer[-(AS_PTR_SIZE + 1)];
@@ -755,6 +763,7 @@ int asCGenericVariadic::SetReturnObject(void* obj)
 		// or the default constructor followed by the assignment operator
 		void* mem = (void*)*(asPWORD*)&stackPointer[-(AS_PTR_SIZE + 1)];
 		engine->ConstructScriptObjectCopy(mem, obj, CastToObjectType(dt->GetTypeInfo()));
+		returnValueConstructed = true;
 		return 0;
 	}
 
