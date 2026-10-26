@@ -257,8 +257,7 @@ enum asEObjTypeFlags
 	asOBJ_ENUM                        = (1<<26),
 	asOBJ_TEMPLATE_SUBTYPE            = (1<<27),
 	asOBJ_TYPEDEF                     = (1<<28),
-	asOBJ_ABSTRACT                    = (1<<29),
-	asOBJ_APP_ALIGN16                 = (1<<30)
+	asOBJ_ABSTRACT                    = (1<<29)
 };
 
 // These need to be here since they are too large for enum underlying type (int32 or uint32) on C++98 compliant compilers
@@ -411,6 +410,8 @@ typedef void (*asFUNCTION_t)();
 typedef void (*asGENFUNC_t)(asIScriptGeneric *);
 typedef void *(*asALLOCFUNC_t)(size_t);
 typedef void (*asFREEFUNC_t)(void *);
+typedef void *(*asALLOCALIGNEDFUNC_t)(size_t size, size_t alignment, void *userParam);
+typedef void (*asFREEALIGNEDFUNC_t)(void *ptr, void *userParam);
 typedef void (*asCLEANENGINEFUNC_t)(asIScriptEngine *);
 typedef void (*asCLEANMODULEFUNC_t)(asIScriptModule *);
 typedef void (*asCLEANCONTEXTFUNC_t)(asIScriptContext *);
@@ -673,6 +674,9 @@ public:
 	virtual int Release() const = 0;
 	virtual int ShutDownAndRelease() = 0;
 
+	// Memory for instances of registered value types and script classes
+	virtual int SetObjectMemoryFunctions(asALLOCALIGNEDFUNC_t allocFunc, asFREEALIGNEDFUNC_t freeFunc, void *userParam = 0) = 0;
+
 	// Engine properties
 	virtual int     SetEngineProperty(asEEngineProp property, asPWORD value) = 0;
 	virtual asPWORD GetEngineProperty(asEEngineProp property) const = 0;
@@ -702,6 +706,7 @@ public:
 
 	// Object types
 	virtual int            RegisterObjectType(const char *obj, int byteSize, asQWORD flags) = 0;
+	virtual int            RegisterObjectType(const char *obj, int byteSize, int alignment, asQWORD flags) = 0;
 	virtual int            RegisterObjectProperty(const char *obj, const char *declaration, int byteOffset, int compositeOffset = 0, bool isCompositeIndirect = false) = 0;
 	virtual int            RegisterObjectMethod(const char *obj, const char *declaration, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false) = 0;
 	virtual int            RegisterObjectBehaviour(const char *obj, asEBehaviours behaviour, const char *declaration, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false) = 0;
@@ -769,6 +774,8 @@ public:
 	virtual void                  *CreateScriptObject(const asITypeInfo *type) = 0;
 	virtual void                  *CreateScriptObjectCopy(void *obj, const asITypeInfo *type) = 0;
 	virtual void                  *CreateUninitializedScriptObject(const asITypeInfo *type) = 0;
+	virtual void                  *AllocateObjectMemory(const asITypeInfo *type) = 0;
+	virtual void                   FreeObjectMemory(void *ptr) = 0;
 	virtual asIScriptFunction     *CreateDelegate(asIScriptFunction *func, void *obj) = 0;
 	virtual int                    AssignScriptObject(void *dstObj, void *srcObj, const asITypeInfo *type) = 0;
 	virtual void                   ReleaseScriptObject(void *obj, const asITypeInfo *type) = 0;
@@ -1088,6 +1095,7 @@ public:
 	virtual bool             DerivesFrom(const asITypeInfo *objType) const = 0;
 	virtual asQWORD          GetFlags() const = 0;
 	virtual asUINT           GetSize() const = 0;
+	virtual asUINT           GetAlignment() const = 0;
 	virtual int              GetTypeId() const = 0;
 	virtual int              GetSubTypeId(asUINT subTypeIndex = 0) const = 0;
 	virtual asITypeInfo     *GetSubType(asUINT subTypeIndex = 0) const = 0;
