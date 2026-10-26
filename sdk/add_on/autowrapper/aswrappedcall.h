@@ -729,16 +729,22 @@ struct Id {
 	template <T fn_ptr> AS_NAMESPACE_QUALIFIER asSFuncPtr ol(void) { return asFUNCTION(&ObjLast<T>::template f<fn_ptr>); }
 };
 
-template <typename T>
-Id<T> id(T /*fn_ptr*/) { return Id<T>(); }
-
-// On GNUC it is necessary to use the template keyword as disambiguator.
-// MSVC seems to accept both with or without the template keyword.
-#if defined(__GNUC__)
-	#define TMPL template
-#else
-	#define TMPL
+// Since C++17 noexcept is part of the function type, but the wrappers are only declared for
+// functions without noexcept. As a pointer to a noexcept function converts to a pointer to
+// the same function without noexcept, the wrappers are used with noexcept removed from the type.
+template <typename T> struct RemoveNoexcept { typedef T type; };
+#if __cplusplus >= 201703L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201703L)
+template <typename R, typename... A> struct RemoveNoexcept<R (*)(A...) noexcept> { typedef R (*type)(A...); };
+template <typename R, typename C, typename... A> struct RemoveNoexcept<R (C::*)(A...) noexcept> { typedef R (C::*type)(A...); };
+template <typename R, typename C, typename... A> struct RemoveNoexcept<R (C::*)(A...) const noexcept> { typedef R (C::*type)(A...) const; };
 #endif
+
+template <typename T>
+Id<typename RemoveNoexcept<T>::type> id(T /*fn_ptr*/) { return Id<typename RemoveNoexcept<T>::type>(); }
+
+// The template keyword is necessary as disambiguator in dependent contexts. Since C++11 it
+// is allowed everywhere, and it is required by clang-cl and by MSVC in conformance mode
+#define TMPL template
 
 #define WRAP_FN(name)             (::gw::id(name).TMPL f< name >())
 #define WRAP_MFN(ClassType, name) (::gw::id(&ClassType::name).TMPL f< &ClassType::name >())
