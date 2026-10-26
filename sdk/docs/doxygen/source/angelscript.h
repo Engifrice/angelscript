@@ -3130,8 +3130,13 @@ public:
 	//! context is currently calling a system function, thus this method can only be 
 	//! used for system functions.
 	//!
-	//! Note that if your system function sets an exception, it should not return any 
-	//! object references because the engine will not release the returned reference.
+	//! If your system function sets an exception and returns an object handle, the engine
+	//! will release the returned handle. If it returns a value type by value, the engine will
+	//! destroy the returned value. For the generic calling convention the value is considered
+	//! constructed if \ref asIScriptGeneric::SetReturnObject "SetReturnObject" was called, or if
+	//! \ref asIScriptGeneric::GetAddressOfReturnLocation "GetAddressOfReturnLocation" was called,
+	//! in which case the function must construct the value in that location even when it sets
+	//! an exception.
 	virtual int                SetException(const char *info, bool allowCatch = true) = 0;
 	//! \brief Returns the line number where the exception occurred.
 	//! \param[out] column The variable will receive the column number.
