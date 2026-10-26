@@ -721,18 +721,19 @@ int asCDataType::GetSizeOnStackDWords() const
 	return GetSizeInMemoryDWords() + size;
 }
 
-#ifdef WIP_16BYTE_ALIGN
-int  asCDataType::GetAlignment() const
+int asCDataType::GetAlignment() const
 {
-	if( typeInfo == NULL )
-	{
-		// TODO: Small primitives should not be aligned to 4 byte boundaries
-		return 4; //Default alignment
-	}
+	// Handles and references are stored as pointers
+	if( isObjectHandle || isReference || tokenType == ttQuestion )
+		return sizeof(void*);
 
-	return typeInfo->alignment;
+	if( typeInfo != 0 )
+		return typeInfo->alignment;
+
+	// Primitives are aligned to their size
+	int size = GetSizeInMemoryBytes();
+	return size > 0 ? size : 1;
 }
-#endif
 
 asSTypeBehaviour *asCDataType::GetBehaviour() const
 {
