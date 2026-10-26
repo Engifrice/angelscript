@@ -82,6 +82,7 @@ public:
 	bool             DerivesFrom(const asITypeInfo *objType) const { UNUSED_VAR(objType); return 0; }
 	asQWORD          GetFlags() const;
 	asUINT           GetSize() const;
+	asUINT           GetAlignment() const;
 	int              GetTypeId() const;
 	int              GetSubTypeId(asUINT subtypeIndex = 0) const { UNUSED_VAR(subtypeIndex); return -1; }
 	asITypeInfo     *GetSubType(asUINT subtypeIndex = 0) const { UNUSED_VAR(subtypeIndex); return 0; }
@@ -163,6 +164,7 @@ public:
 	asCString                    name;
 	asSNameSpace                *nameSpace;
 	int                          size;
+	int                          alignment;
 	mutable int                  typeId;
 	asQWORD                      flags;
 	asDWORD                      accessMask;
