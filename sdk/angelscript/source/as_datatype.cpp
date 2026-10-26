@@ -732,6 +732,29 @@ int asCDataType::GetSizeOfArgSlotDWords() const
 	return alignOffset(GetSizeOnStackDWords(), AS_ARG_SLOT_DWORDS);
 }
 
+// The size in dwords that a local variable of this type takes up on the stack.
+// Value types are stored inline on the stack, unless they are allocated on the heap
+int asCDataType::GetSizeOfLocalDWords(bool onHeap) const
+{
+	if( !onHeap && IsObject() )
+		return GetSizeInMemoryDWords();
+
+	return GetSizeOnStackDWords();
+}
+
+// The alignment in dwords of a local variable of this type on the stack.
+// Variables smaller than a dword still take up a full dword
+int asCDataType::GetAlignmentOfLocalDWords(bool onHeap) const
+{
+	int alignment;
+	if( onHeap && (IsObject() || IsFuncdef()) )
+		alignment = sizeof(void*); // The variable holds a pointer to the object
+	else
+		alignment = GetAlignment();
+
+	return alignment <= 4 ? 1 : alignment / 4;
+}
+
 int asCDataType::GetAlignment() const
 {
 	// Handles and references are stored as pointers. The same goes for reference types,

@@ -127,6 +127,8 @@ public:
 
 	int  GetSizeOnStackDWords()  const;
 	int  GetSizeOfArgSlotDWords() const;
+	int  GetSizeOfLocalDWords(bool onHeap) const;
+	int  GetAlignmentOfLocalDWords(bool onHeap) const;
 	int  GetSizeInMemoryBytes()  const;
 	int  GetSizeInMemoryDWords() const;
 	int  GetAlignment()          const;

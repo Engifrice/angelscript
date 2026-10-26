@@ -6588,25 +6588,13 @@ int asCCompiler::AllocateVariable(const asCDataType &type, bool isTemporary, boo
 // Returns the size in dwords that the variable in the slot takes up on the stack
 int asCCompiler::GetVariableSizeDWords(int varIndex)
 {
-	// Value types are stored inline on the stack, unless they are allocated on the heap
-	if( !variableIsOnHeap[varIndex] && variableAllocations[varIndex].IsObject() )
-		return variableAllocations[varIndex].GetSizeInMemoryDWords();
-
-	return variableAllocations[varIndex].GetSizeOnStackDWords();
+	return variableAllocations[varIndex].GetSizeOfLocalDWords(variableIsOnHeap[varIndex]);
 }
 
-// Returns the alignment in dwords of the variable in the slot. Variables smaller than a dword still take up a full dword
+// Returns the alignment in dwords of the variable in the slot
 int asCCompiler::GetVariableAlignmentDWords(int varIndex)
 {
-	const asCDataType &dt = variableAllocations[varIndex];
-
-	int alignment;
-	if( variableIsOnHeap[varIndex] && (dt.IsObject() || dt.IsFuncdef()) )
-		alignment = sizeof(void*); // The variable holds a pointer to the object
-	else
-		alignment = dt.GetAlignment();
-
-	return alignment <= 4 ? 1 : alignment / 4;
+	return variableAllocations[varIndex].GetAlignmentOfLocalDWords(variableIsOnHeap[varIndex]);
 }
 
 int asCCompiler::GetVariableOffset(int varIndex)
