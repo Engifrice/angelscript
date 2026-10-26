@@ -165,6 +165,7 @@ public:
 	virtual int            GetTypeIdByDecl(const char *decl) const;
 	virtual const char    *GetTypeDeclaration(int typeId, bool includeNamespace = false) const;
 	virtual int            GetSizeOfPrimitiveType(int typeId) const;
+	virtual int            GetAlignmentOfType(int typeId) const;
 	virtual asITypeInfo   *GetTypeInfoById(int typeId) const;
 	virtual asITypeInfo   *GetTypeInfoByName(const char *name) const;
 	virtual asITypeInfo   *GetTypeInfoByDecl(const char *decl) const;

@@ -5418,6 +5418,21 @@ int asCScriptEngine::GetSizeOfPrimitiveType(int typeId) const
 }
 
 // interface
+int asCScriptEngine::GetAlignmentOfType(int typeId) const
+{
+	// The type id 0 is used for null handles, e.g. in list buffers for the ? type
+	if( typeId == 0 )
+		return sizeof(void*);
+
+	asCDataType dt = GetDataTypeFromTypeId(typeId);
+	if( dt.GetTypeInfo() == 0 && !dt.IsPrimitive() )
+		return 0;
+
+	// Handles and reference types are stored as pointers by the engine
+	return dt.GetAlignment();
+}
+
+// interface
 int asCScriptEngine::RefCastObject(void *obj, asITypeInfo *fromType, asITypeInfo *toType, void **newPtr, bool useOnlyImplicitCast)
 {
 	if( newPtr == 0 ) return asINVALID_ARG;
@@ -6994,9 +7009,8 @@ void asCScriptEngine::DestroySubList(asBYTE *&buffer, asSListPatternNode *&node)
 	{
 		if( node->type == asLPT_REPEAT || node->type == asLPT_REPEAT_SAME )
 		{
-			// Align the offset to 4 bytes boundary
-			if( (asPWORD(buffer) & 0x3) )
-				buffer += 4 - (asPWORD(buffer) & 0x3);
+			// The count is aligned to 4 bytes
+			buffer = alignPointer(buffer, 4);
 
 			// Determine how many times the pattern repeat
 			count = *(asUINT*)buffer;
@@ -7035,14 +7049,17 @@ void asCScriptEngine::DestroySubList(asBYTE *&buffer, asSListPatternNode *&node)
 			{
 				if( isVarType )
 				{
-					// Align the offset to 4 bytes boundary
-					if( (asPWORD(buffer) & 0x3) )
-						buffer += 4 - (asPWORD(buffer) & 0x3);
+					// The type id is aligned to 4 bytes
+					buffer = alignPointer(buffer, 4);
 
+					// A type id of 0 means a null handle
 					int typeId = *(int*)buffer;
 					buffer += 4;
-					dt = GetDataTypeFromTypeId(typeId);
+					dt = typeId ? GetDataTypeFromTypeId(typeId) : asCDataType::CreateNullHandle();
 				}
+
+				// Each value is aligned to its natural alignment
+				buffer = alignPointer(buffer, dt.GetAlignment());
 
 				asCTypeInfo *ti = dt.GetTypeInfo();
 				if( ti && (ti->flags & asOBJ_ENUM) == 0 )
@@ -7051,10 +7068,6 @@ void asCScriptEngine::DestroySubList(asBYTE *&buffer, asSListPatternNode *&node)
 					if( ti->flags & asOBJ_VALUE )
 					{
 						asUINT size = ti->GetSize();
-
-						// Align the offset to 4 bytes boundary
-						if( size >= 4 && (asPWORD(buffer) & 0x3) )
-							buffer += 4 - (asPWORD(buffer) & 0x3);
 
 						asCObjectType *ot = CastToObjectType(ti);
 						if( ot && ot->beh.destruct )
@@ -7084,10 +7097,6 @@ void asCScriptEngine::DestroySubList(asBYTE *&buffer, asSListPatternNode *&node)
 					}
 					else
 					{
-						// Align the offset to 4 bytes boundary
-						if( asPWORD(buffer) & 0x3 )
-							buffer += 4 - (asPWORD(buffer) & 0x3);
-
 						// Call the release behaviour
 						void *ptr = *(void**)buffer;
 						if( ptr )
@@ -7097,14 +7106,8 @@ void asCScriptEngine::DestroySubList(asBYTE *&buffer, asSListPatternNode *&node)
 				}
 				else
 				{
-					asUINT size = dt.GetSizeInMemoryBytes();
-
-					// Align the offset to 4 bytes boundary
-					if( size >= 4 && (asPWORD(buffer) & 0x3) )
-						buffer += 4 - (asPWORD(buffer) & 0x3);
-
 					// Advance the buffer
-					buffer += size;
+					buffer += dt.GetSizeInListBuffer();
 				}
 			}
 		}
