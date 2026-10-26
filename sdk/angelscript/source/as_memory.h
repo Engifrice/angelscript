@@ -51,6 +51,10 @@ extern asFREEFUNC_t  userFree;
 // The maximum type alignment supported
 const asUINT AS_MAX_TYPE_ALIGNMENT = 16;
 
+// Every value pushed on the script stack takes up a multiple of this many dwords (8 bytes),
+// so the stack pointer is always aligned to 8 bytes
+const int AS_ARG_SLOT_DWORDS = 2;
+
 // Default aligned memory routines, built on the global memory functions. These
 // are used for object memory when the application hasn't informed its own
 void *defaultAlignedAlloc(size_t size, size_t alignment, void *userParam);
