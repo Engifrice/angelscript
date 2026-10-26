@@ -564,23 +564,29 @@ private:
 	float TEST[1024 * 4];
 };
 
-template< typename T > static void ConstructorFunc(void* memory)
+template< typename T > static void ConstructorFunc(asIScriptGeneric* gen)
 {
 	// Initialize the pre-allocated memory by calling the
 	// object constructor with the placement-new operator
-	new(memory) T();
+	new(gen->GetObject()) T();
 }
-template< typename T > static void DestructorFunc(void* memory)
+template< typename T > static void DestructorFunc(asIScriptGeneric* gen)
 {
 	// Uninitialize the memory by calling the object destructor
-	((T*)memory)->~T();
+	((T*)gen->GetObject())->~T();
+}
+template< typename T > static void OpAssignFunc(asIScriptGeneric* gen)
+{
+	T* self = (T*)gen->GetObject();
+	*self = *(const T*)gen->GetArgObject(0);
+	gen->SetReturnAddress(self);
 }
 
 template< typename T > bool RegisterClassConstructAndDestruct(asIScriptEngine* pEngine, const char* pClassName)
 {
-	auto r = pEngine->RegisterObjectBehaviour(pClassName, asBEHAVE_CONSTRUCT, "void f()", WRAP_OBJ_LAST(ConstructorFunc<T>), asCALL_GENERIC);
+	auto r = pEngine->RegisterObjectBehaviour(pClassName, asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(ConstructorFunc<T>), asCALL_GENERIC);
 	assert(r >= 0);
-	r = pEngine->RegisterObjectBehaviour(pClassName, asBEHAVE_DESTRUCT, "void f()", WRAP_OBJ_LAST(DestructorFunc<T>), asCALL_GENERIC);
+	r = pEngine->RegisterObjectBehaviour(pClassName, asBEHAVE_DESTRUCT, "void f()", asFUNCTION(DestructorFunc<T>), asCALL_GENERIC);
 	assert(r >= 0);
 
 	return true;
@@ -592,7 +598,7 @@ template< typename T > bool RegisterClassOpAssign(asIScriptEngine* pEngine, cons
 	opFunc += "& opAssign(const ";
 	opFunc += pClassName;
 	opFunc += " &in )";
-	auto r = pEngine->RegisterObjectMethod(pClassName, opFunc.c_str(), WRAP_MFN_PR(T, operator =, (const T&), T&), asCALL_GENERIC); assert(r >= 0);
+	auto r = pEngine->RegisterObjectMethod(pClassName, opFunc.c_str(), asFUNCTION(OpAssignFunc<T>), asCALL_GENERIC); assert(r >= 0);
 
 	return true;
 }

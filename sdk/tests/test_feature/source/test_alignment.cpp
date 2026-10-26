@@ -181,6 +181,77 @@ static void GenVec_Generic(asIScriptGeneric *gen)
 	g_aliveVec16++;
 }
 
+// A value type whose size and alignment depend on how it is registered, to simulate a type that
+// differs between platforms. Guard values are written at the start and end of the object, so
+// overlapping variables would be detected.
+static asUINT g_valSize = 0;
+static asUINT g_valAlignment = 0;
+static int g_badVals = 0;
+
+static void CheckVal(const void *ptr)
+{
+	const asBYTE *p = (const asBYTE*)ptr;
+	if( (uintptr_t)p % g_valAlignment ||
+		*(const asUINT*)p != 0x12345678 ||
+		*(const asUINT*)(p + g_valSize - 4) != 0x9ABCDEF0 )
+		g_badVals++;
+}
+
+static void Val_Construct(asIScriptGeneric *gen)
+{
+	asBYTE *p = (asBYTE*)gen->GetObject();
+	memset(p, 0, g_valSize);
+	*(asUINT*)p = 0x12345678;
+	*(asUINT*)(p + g_valSize - 4) = 0x9ABCDEF0;
+	CheckVal(p);
+}
+
+static void Val_CopyConstruct(asIScriptGeneric *gen)
+{
+	CheckVal(gen->GetArgObject(0));
+	memcpy(gen->GetObject(), gen->GetArgObject(0), g_valSize);
+	CheckVal(gen->GetObject());
+}
+
+static void Val_Destruct(asIScriptGeneric *gen)
+{
+	CheckVal(gen->GetObject());
+}
+
+static void Val_Assign(asIScriptGeneric *gen)
+{
+	CheckVal(gen->GetObject());
+	CheckVal(gen->GetArgObject(0));
+	memcpy(gen->GetObject(), gen->GetArgObject(0), g_valSize);
+	gen->SetReturnAddress(gen->GetObject());
+}
+
+static void Val_Check(asIScriptGeneric *gen)
+{
+	CheckVal(gen->GetArgAddress(0));
+}
+
+static void PodX_Check(asIScriptGeneric *gen)
+{
+	// The pod has the same alignment as the val type
+	if( (uintptr_t)gen->GetArgAddress(0) % g_valAlignment )
+		g_badVals++;
+}
+
+// Registers the types with the given size and alignment, as different platforms could do
+static void RegisterPlatformTypes(asIScriptEngine *engine, asUINT valSize, asUINT valAlignment, asUINT podSize)
+{
+	engine->RegisterObjectType("val", (int)valSize, (int)valAlignment, asOBJ_VALUE | asOBJ_APP_CLASS_CDAK);
+	engine->RegisterObjectBehaviour("val", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(Val_Construct), asCALL_GENERIC);
+	engine->RegisterObjectBehaviour("val", asBEHAVE_CONSTRUCT, "void f(const val &in)", asFUNCTION(Val_CopyConstruct), asCALL_GENERIC);
+	engine->RegisterObjectBehaviour("val", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(Val_Destruct), asCALL_GENERIC);
+	engine->RegisterObjectMethod("val", "val &opAssign(const val &in)", asFUNCTION(Val_Assign), asCALL_GENERIC);
+	engine->RegisterObjectType("podx", (int)podSize, (int)valAlignment, asOBJ_VALUE | asOBJ_POD);
+	engine->RegisterGlobalFunction("void checkVal(const val &in)", asFUNCTION(Val_Check), asCALL_GENERIC);
+	engine->RegisterGlobalFunction("void checkPodx(const podx &in)", asFUNCTION(PodX_Check), asCALL_GENERIC);
+	engine->RegisterGlobalFunction("void assert(bool)", asFUNCTION(Assert), asCALL_GENERIC);
+}
+
 // Returns the alignment of the type, or 0 if the type doesn't exist
 static asUINT AlignmentOf(asITypeInfo *type, const char *name)
 {
@@ -787,6 +858,151 @@ bool Test()
 		}
 
 		if( bout.buffer != "" )
+		{
+			PRINTF("%s", bout.buffer.c_str());
+			TEST_FAILED;
+		}
+
+		engine->ShutDownAndRelease();
+	}
+
+	// Bytecode saved on one platform can be loaded on another, where the value types have different sizes and
+	// alignments. This is simulated by registering the types differently in the engine that saves the bytecode
+	// and the engine that loads it. The layout of the local variables must be recomputed when loading.
+	{
+		struct Platform { asUINT valSize, valAlignment, podSize; };
+		const Platform platforms[] = { {24, 8, 8}, {48, 16, 32}, {12, 4, 4} };
+		const asUINT numPlatforms = sizeof(platforms)/sizeof(platforms[0]);
+
+		const char *script =
+			"val makeVal() { val v; return v; } \n"
+			"void inner(val v, int8 x) \n"
+			"{ \n"
+			"  val w = v; \n"
+			"  podx q; \n"
+			"  double z = 4.5; \n"
+			"  checkVal(w); checkPodx(q); \n"
+			"  assert( x == 3 && z == 4.5 ); \n"
+			"} \n"
+			"void main() \n"
+			"{ \n"
+			"  int8 a = 1; \n"
+			"  val v1; \n"
+			"  double d1 = 1.5; \n"
+			"  podx p1; \n"
+			"  int8 b = 2; \n"
+			"  val v2 = makeVal(); \n"
+			"  int64 i1 = 123456789012; \n"
+			"  podx p2; \n"
+			"  double d2 = 2.5; \n"
+			"  checkVal(v1); checkVal(v2); checkPodx(p1); checkPodx(p2); \n"
+			"  v1 = v2; \n"
+			"  for( int n = 0; n < 2; n++ ) \n"
+			"  { \n"
+			"    int8 c = 5; \n"
+			"    val v3; \n"
+			"    double d3 = 3.5; \n"
+			"    checkVal(v3); \n"
+			"    assert( c == 5 && d3 == 3.5 ); \n"
+			"  } \n"
+			"  inner(v1, 3); \n"
+			"  assert( a == 1 && b == 2 && d1 == 1.5 && d2 == 2.5 && i1 == 123456789012 ); \n"
+			"} \n";
+
+		for( asUINT from = 0; from < numPlatforms; from++ )
+		{
+			for( asUINT to = 0; to < numPlatforms; to++ )
+			{
+				if( from == to )
+					continue;
+
+				// Build and run on the first platform, then save the bytecode
+				asIScriptEngine *engine1 = asCreateScriptEngine();
+				engine1->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+				bout.buffer = "";
+				RegisterPlatformTypes(engine1, platforms[from].valSize, platforms[from].valAlignment, platforms[from].podSize);
+				g_valSize = platforms[from].valSize;
+				g_valAlignment = platforms[from].valAlignment;
+				g_badVals = 0;
+
+				asIScriptModule *mod = engine1->GetModule("test", asGM_ALWAYS_CREATE);
+				mod->AddScriptSection("test", script);
+				r = mod->Build();
+				if( r < 0 )
+					TEST_FAILED;
+				r = ExecuteString(engine1, "main()", mod);
+				if( r != asEXECUTION_FINISHED )
+					TEST_FAILED;
+
+				CBytecodeStream stream("test");
+				r = mod->SaveByteCode(&stream);
+				if( r < 0 )
+					TEST_FAILED;
+				engine1->ShutDownAndRelease();
+
+				// Load and run on the second platform
+				asIScriptEngine *engine2 = asCreateScriptEngine();
+				engine2->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+				RegisterPlatformTypes(engine2, platforms[to].valSize, platforms[to].valAlignment, platforms[to].podSize);
+				g_valSize = platforms[to].valSize;
+				g_valAlignment = platforms[to].valAlignment;
+
+				mod = engine2->GetModule("test", asGM_ALWAYS_CREATE);
+				r = mod->LoadByteCode(&stream);
+				if( r < 0 )
+					TEST_FAILED;
+				else
+				{
+					r = ExecuteString(engine2, "main()", mod);
+					if( r != asEXECUTION_FINISHED )
+						TEST_FAILED;
+				}
+				engine2->ShutDownAndRelease();
+
+				if( g_badVals != 0 )
+				{
+					PRINTF("%d values were misaligned or overwritten when saving with %d and loading with %d byte alignment\n", g_badVals, platforms[from].valAlignment, platforms[to].valAlignment);
+					TEST_FAILED;
+				}
+				if( bout.buffer != "" )
+				{
+					PRINTF("%s", bout.buffer.c_str());
+					TEST_FAILED;
+				}
+			}
+		}
+	}
+
+	// Bytecode that was not saved by a compatible version of the library is rejected
+	{
+		engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+
+		asIScriptModule *mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
+		mod->AddScriptSection("test", "void main() {} \n");
+		r = mod->Build();
+		if( r < 0 )
+			TEST_FAILED;
+
+		CBytecodeStream stream("test");
+		r = mod->SaveByteCode(&stream);
+		if( r < 0 )
+			TEST_FAILED;
+
+		// The same bytecode loads fine
+		mod = engine->GetModule("loaded", asGM_ALWAYS_CREATE);
+		r = mod->LoadByteCode(&stream);
+		if( r < 0 )
+			TEST_FAILED;
+
+		// Change the version stored after the magic number
+		stream.Restart();
+		stream.buffer[4] ^= 0xFF;
+		r = mod->LoadByteCode(&stream);
+		if( r >= 0 )
+			TEST_FAILED;
+		if( bout.buffer.find("The bytecode was not saved by a compatible version of the library") == std::string::npos )
 		{
 			PRINTF("%s", bout.buffer.c_str());
 			TEST_FAILED;

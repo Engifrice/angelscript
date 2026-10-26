@@ -326,7 +326,8 @@ static const asBehavior_t astrace_ObjectBehaviors[] =
 class base
 {
 public:
-	virtual void aMethod();
+	// The methods are never called, but must be defined for the type info to be generated
+	virtual void aMethod() {}
 
 	int aProperty;
 };
@@ -335,7 +336,7 @@ public:
 class derived : public base
 {
 public:
-	virtual void aNewMethod();
+	virtual void aNewMethod() {}
 	int aNewProperty;
 
 	// TODO: If derived type hides members of base type this pattern of registering members for the derived type cannot be used
