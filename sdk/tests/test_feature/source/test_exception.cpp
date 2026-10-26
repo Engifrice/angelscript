@@ -970,7 +970,7 @@ bool Test()
 			asIScriptFunction *func = type->GetMethodByDecl("void Test(string c)");
 			ctx = engine->CreateContext();
 			ctx->Prepare(func);
-			asIScriptContext *obj = (asIScriptContext*)engine->CreateScriptObject(type);
+			asIScriptObject *obj = (asIScriptObject*)engine->CreateScriptObject(type);
 			ctx->SetObject(obj); // Just sets the address
 			CScriptString *str = new CScriptString();
 			ctx->SetArgObject(0, str); // Makes a copy of the object

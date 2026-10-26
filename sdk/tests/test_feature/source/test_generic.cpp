@@ -554,7 +554,7 @@ public:
 	virtual void b() {}
 };
 
-class C : public A, B
+class C : public A, public B
 {
 public:
 	C() {id = 2;}
@@ -562,6 +562,13 @@ public:
 	virtual void c(int) {assert(id == 2);}
 	virtual void c(float) const {assert(id == 2);}
 };
+
+// The method of the second base class must be called through the derived class, so the pointer
+// is adjusted to the B subobject. Wrapping B::b directly would call it with the pointer to C.
+static void C_b_Generic(asIScriptGeneric *gen)
+{
+	static_cast<C*>(gen->GetObject())->b();
+}
 
 // http://www.gamedev.net/topic/639902-premature-destruction-of-object-in-android/
 std::stringstream buf;
@@ -686,7 +693,7 @@ bool Test2()
 	r = engine->RegisterObjectBehaviour("C", asBEHAVE_CONSTRUCT, "void f()", WRAP_CON(C, ()), asCALL_GENERIC); assert( r >= 0 );
 	r = engine->RegisterObjectBehaviour("C", asBEHAVE_DESTRUCT, "void f()", WRAP_DES(C), asCALL_GENERIC); assert( r >= 0 );
 	r = engine->RegisterObjectMethod("C", "void a() const", WRAP_MFN(A, a), asCALL_GENERIC); assert( r >= 0 );
-	r = engine->RegisterObjectMethod("C", "void b()", WRAP_MFN(B, b), asCALL_GENERIC); assert( r >= 0 );
+	r = engine->RegisterObjectMethod("C", "void b()", asFUNCTION(C_b_Generic), asCALL_GENERIC); assert( r >= 0 );
 	r = engine->RegisterObjectMethod("C", "void c(int)", WRAP_MFN_PR(C, c, (int), void), asCALL_GENERIC); assert( r >= 0 );
 	r = engine->RegisterObjectMethod("C", "void c(float) const", WRAP_MFN_PR(C, c, (float) const, void), asCALL_GENERIC); assert( r >= 0 );
 
