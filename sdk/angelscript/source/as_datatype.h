@@ -129,6 +129,7 @@ public:
 	int  GetSizeInMemoryBytes()  const;
 	int  GetSizeInMemoryDWords() const;
 	int  GetAlignment()          const;
+	int  GetSizeInListBuffer()   const;
 
 	void SetTokenType(eTokenType tt)         {tokenType = tt;}
 	void SetTypeInfo(asCTypeInfo *ti)       {typeInfo = ti;}

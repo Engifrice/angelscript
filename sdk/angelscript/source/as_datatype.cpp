@@ -723,8 +723,9 @@ int asCDataType::GetSizeOnStackDWords() const
 
 int asCDataType::GetAlignment() const
 {
-	// Handles and references are stored as pointers
-	if( isObjectHandle || isReference || tokenType == ttQuestion )
+	// Handles and references are stored as pointers. The same goes for reference types,
+	// as the engine always stores those as pointers, e.g. in members and list buffers
+	if( isObjectHandle || isReference || tokenType == ttQuestion || (typeInfo && (typeInfo->flags & asOBJ_REF)) )
 		return sizeof(void*);
 
 	if( typeInfo != 0 )
@@ -733,6 +734,17 @@ int asCDataType::GetAlignment() const
 	// Primitives are aligned to their size
 	int size = GetSizeInMemoryBytes();
 	return size > 0 ? size : 1;
+}
+
+// Primitives and value types are stored inline in the list buffer, while
+// handles and reference types are stored as pointers. Each value is placed
+// at an offset that is a multiple of GetAlignment()
+int asCDataType::GetSizeInListBuffer() const
+{
+	if( IsPrimitive() || (!IsObjectHandle() && typeInfo && (typeInfo->flags & asOBJ_VALUE)) )
+		return GetSizeInMemoryBytes();
+
+	return AS_PTR_SIZE*4;
 }
 
 asSTypeBehaviour *asCDataType::GetBehaviour() const
