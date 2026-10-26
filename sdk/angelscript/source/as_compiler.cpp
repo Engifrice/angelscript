@@ -366,16 +366,12 @@ int asCCompiler::CompileFactory(asCBuilder *in_builder, asCScriptCode *in_script
 		}
 		else
 		{
+			// Each argument takes up a full slot, even if the value is smaller
+			offset -= outFunc->parameterTypes[a].GetSizeOfArgSlotDWords();
 			if( outFunc->parameterTypes[a].GetSizeOnStackDWords() == 2 )
-			{
-				offset -= 2;
 				byteCode.InstrSHORT(asBC_PshV8, short(-offset));
-			}
 			else
-			{
-				offset -= 1;
 				byteCode.InstrSHORT(asBC_PshV4, short(-offset));
-			}
 		}
 	}
 
@@ -439,7 +435,7 @@ void asCCompiler::FinalizeFunction()
 		}
 
 		// Move to next parameter
-		stackPos -= type.GetSizeOnStackDWords();
+		stackPos -= type.GetSizeOfArgSlotDWords();
 	}
 	// Add the return type too at the end if it returns on the stack, which is when it uses a hidden parameter
 	if (outFunc->DoesReturnOnStack())
@@ -449,6 +445,12 @@ void asCCompiler::FinalizeFunction()
 		returnType.MakeReference(true);
 		outFunc->AddVariable("", returnType, outFunc->objectType ? -AS_PTR_SIZE : 0, false);
 	}
+
+	// The values pushed on the stack must be aligned to 8 bytes, so the space for the local variables is rounded up
+	outFunc->scriptData->variableSpace = alignOffset(outFunc->scriptData->variableSpace, AS_ARG_SLOT_DWORDS);
+
+	// Determine the alignment the frame pointer needs for the local variables to be aligned
+	outFunc->CalculateFrameAlignment();
 
 	// Finalize the bytecode
 	byteCode.Finalize(tempVariableOffsets);
@@ -464,7 +466,7 @@ void asCCompiler::FinalizeFunction()
 	outFunc->scriptData->byteCode.SetLength(byteCode.GetSize());
 	byteCode.Output(outFunc->scriptData->byteCode.AddressOf());
 	outFunc->AddReferences();
-	outFunc->scriptData->stackNeeded = byteCode.largestStackUsed + outFunc->scriptData->variableSpace;
+	outFunc->scriptData->stackNeeded = byteCode.largestStackUsed + outFunc->scriptData->variableSpace + outFunc->GetFrameRealignmentDWords();
 	outFunc->scriptData->lineNumbers = byteCode.lineNumbers;
 
 	// Extract the script section indexes too if there are any entries that are different from the function's script section
@@ -572,7 +574,7 @@ int asCCompiler::SetupParametersAndReturnVariable(asCArray<asCString> &parameter
 			vs.DeclareVariable("", type, stackPos, onHeap);
 
 		// Move to next parameter
-		stackPos -= type.GetSizeOnStackDWords();
+		stackPos -= type.GetSizeOfArgSlotDWords();
 	}
 
 	for( n = asUINT(vs.variables.GetLength()); n-- > 0; )
@@ -2365,7 +2367,7 @@ void asCCompiler::MoveArgsToStack(int funcId, asCByteCode *bc, asCArray<asCExprC
 		offset += AS_PTR_SIZE;
 
 	if (descr->IsVariadic())
-		offset += 1;
+		offset += AS_ARG_SLOT_DWORDS; // The argument count
 
 #ifdef AS_DEBUG
 	// If the function being called is the opAssign or copy constructor for the same type
@@ -2472,7 +2474,7 @@ void asCCompiler::MoveArgsToStack(int funcId, asCByteCode *bc, asCArray<asCExprC
 			args[n]->type.isTemporary = false;
 		}
 
-		offset += descr->parameterTypes[realParamIdx].GetSizeOnStackDWords();
+		offset += descr->parameterTypes[realParamIdx].GetSizeOfArgSlotDWords();
 	}
 }
 
@@ -6583,9 +6585,36 @@ int asCCompiler::AllocateVariable(const asCDataType &type, bool isTemporary, boo
 	return offset;
 }
 
+// Returns the size in dwords that the variable in the slot takes up on the stack
+int asCCompiler::GetVariableSizeDWords(int varIndex)
+{
+	// Value types are stored inline on the stack, unless they are allocated on the heap
+	if( !variableIsOnHeap[varIndex] && variableAllocations[varIndex].IsObject() )
+		return variableAllocations[varIndex].GetSizeInMemoryDWords();
+
+	return variableAllocations[varIndex].GetSizeOnStackDWords();
+}
+
+// Returns the alignment in dwords of the variable in the slot. Variables smaller than a dword still take up a full dword
+int asCCompiler::GetVariableAlignmentDWords(int varIndex)
+{
+	const asCDataType &dt = variableAllocations[varIndex];
+
+	int alignment;
+	if( variableIsOnHeap[varIndex] && (dt.IsObject() || dt.IsFuncdef()) )
+		alignment = sizeof(void*); // The variable holds a pointer to the object
+	else
+		alignment = dt.GetAlignment();
+
+	return alignment <= 4 ? 1 : alignment / 4;
+}
+
 int asCCompiler::GetVariableOffset(int varIndex)
 {
-	// Return offset to the last dword on the stack
+	// Return offset to the last dword on the stack. The address of the variable
+	// is the frame pointer minus this offset, so the offset is aligned to the
+	// alignment of the variable for the variable to be properly aligned in memory.
+	// The frame pointer is aligned to the largest alignment of all variables.
 
 	// Start at 1 as offset 0 is reserved for the this pointer (or first argument for global functions)
 	int varOffset = 1;
@@ -6593,22 +6622,15 @@ int asCCompiler::GetVariableOffset(int varIndex)
 	// Skip lower variables
 	for( int n = 0; n < varIndex; n++ )
 	{
-		if( !variableIsOnHeap[n] && variableAllocations[n].IsObject() )
-			varOffset += variableAllocations[n].GetSizeInMemoryDWords();
-		else
-			varOffset += variableAllocations[n].GetSizeOnStackDWords();
+		int size = GetVariableSizeDWords(n);
+		varOffset = alignOffset(varOffset + size - 1, GetVariableAlignmentDWords(n)) + 1;
 	}
 
 	if( varIndex < (int)variableAllocations.GetLength() )
 	{
 		// For variables larger than 1 dword the returned offset should be to the last dword
-		int size;
-		if( !variableIsOnHeap[varIndex] && variableAllocations[varIndex].IsObject() )
-			size = variableAllocations[varIndex].GetSizeInMemoryDWords();
-		else
-			size = variableAllocations[varIndex].GetSizeOnStackDWords();
-		if( size > 1 )
-			varOffset += size-1;
+		int size = GetVariableSizeDWords(varIndex);
+		varOffset = alignOffset(varOffset + size - 1, GetVariableAlignmentDWords(varIndex));
 	}
 
 	return varOffset;
@@ -6620,10 +6642,8 @@ int asCCompiler::GetVariableSlot(int offset)
 	int varOffset = 1;
 	for( asUINT n = 0; n < variableAllocations.GetLength(); n++ )
 	{
-		if( !variableIsOnHeap[n] && variableAllocations[n].IsObject() )
-			varOffset += -1 + variableAllocations[n].GetSizeInMemoryDWords();
-		else
-			varOffset += -1 + variableAllocations[n].GetSizeOnStackDWords();
+		// Same layout as in GetVariableOffset
+		varOffset = alignOffset(varOffset + GetVariableSizeDWords(n) - 1, GetVariableAlignmentDWords(n));
 
 		if( varOffset == offset )
 			return n;
@@ -8528,7 +8548,7 @@ asUINT asCCompiler::ImplicitConvObjectValue(asCExprContext *ctx, const asCDataTy
 							{
 								int offset = 0;
 								asCScriptFunction *descr = builder->GetFunctionDescription(funcs[0]);
-								offset = descr->parameterTypes[0].GetSizeOnStackDWords();
+								offset = descr->parameterTypes[0].GetSizeOfArgSlotDWords();
 
 								e.bc.InstrWORD(asBC_GETREF, (asWORD)offset);
 							}
@@ -8647,7 +8667,7 @@ asUINT asCCompiler::ImplicitConvObjectToObject(asCExprContext *ctx, const asCDat
 				{
 					int offset = 0;
 					asCScriptFunction *descr = builder->GetFunctionDescription(funcs[0]);
-					offset = descr->parameterTypes[0].GetSizeOnStackDWords();
+					offset = descr->parameterTypes[0].GetSizeOfArgSlotDWords();
 
 					e.bc.InstrWORD(asBC_GETREF, (asWORD)offset);
 				}
@@ -9178,7 +9198,7 @@ asUINT asCCompiler::ImplicitConvPrimitiveToObject(asCExprContext *ctx, const asC
 			int offset = 0;
 			asCScriptFunction *descr = builder->GetFunctionDescription(funcs[0]);
 			for( asUINT n = 0; n < args.GetLength(); n++ )
-				offset += descr->parameterTypes[n].GetSizeOnStackDWords();
+				offset += descr->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 			ctx->bc.InstrWORD(asBC_GETREF, (asWORD)offset);
 		}
@@ -15844,7 +15864,7 @@ int asCCompiler::MakeFunctionCall(asCExprContext *ctx, int funcId, asCObjectType
 		{
 			int offset = 0;
 			for (n = 0; n < args.GetLength(); n++)
-				offset += descr->parameterTypes[n].GetSizeOnStackDWords();
+				offset += descr->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 			ctx->bc.InstrWORD(asBC_GETREF, (asWORD)offset);
 		}
@@ -17795,13 +17815,13 @@ void asCCompiler::PerformFunctionCall(int funcId, asCExprContext *ctx, bool isCo
 		{
 			// Compute the additional space used for the variadic args
 			asCDataType variadicType = descr->parameterTypes[descr->parameterTypes.GetLength() - 1];
-			int sizeOfVariadicArg = variadicType.GetSizeOnStackDWords();
+			int sizeOfVariadicArg = variadicType.GetSizeOfArgSlotDWords();
 
 			// GetSpaceNeededForArguments already added one variadic arg for the ..., but there might not actually be any
 			argSize -= sizeOfVariadicArg;
 
-			// Add 1 for the arg count
-			argSize++;
+			// Add the slot for the arg count
+			argSize += AS_ARG_SLOT_DWORDS;
 
 			// Add the actual space used for the variadic args
 			argSize += sizeOfVariadicArg * (args->GetLength() - descr->parameterTypes.GetLength() + 1);
