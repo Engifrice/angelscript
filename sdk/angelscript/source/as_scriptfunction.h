@@ -263,6 +263,8 @@ public:
 	void      AddVariable(const asCString &name, const asCDataType &type, int stackOffset, bool onHeap);
 
 	int       GetSpaceNeededForArguments();
+	void      CalculateFrameAlignment();
+	int       GetFrameRealignmentDWords() const;
 	int       GetSpaceNeededForReturnValue();
 	asCString GetDeclarationStr(bool includeObjectName = true, bool includeNamespace = false, bool includeParamNames = false) const;
 	int       GetLineNumber(int programPosition, int *sectionIdx);
@@ -358,6 +360,9 @@ public:
 
 		// The stack space needed for the local variables
 		asDWORD                         variableSpace;
+
+		// The alignment in bytes that the frame pointer must have for all local variables to be aligned
+		asUINT                          frameAlignment;
 
 		// Holds information on scope for object variables on the stack
 		asCArray<asSObjectVariableInfo> objVariableInfo;
