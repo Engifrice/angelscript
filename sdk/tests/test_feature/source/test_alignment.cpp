@@ -1,4 +1,5 @@
 #include "utils.h"
+#include "../../../add_on/scriptdictionary/scriptdictionary.h"
 #include <stdint.h>
 
 namespace TestAlignment
@@ -65,6 +66,26 @@ static void Vec16_Assign(asIScriptGeneric *gen)
 	Vec16 *self = (Vec16*)gen->GetObject();
 	*self = *(Vec16*)gen->GetArgObject(0);
 	gen->SetReturnAddress(self);
+}
+
+// A pod value type that requires 16 byte alignment, so it is stored inline in script classes
+struct alignas(16) Pod16
+{
+	float v[4];
+};
+
+// Returns the offset of the named property in the type, or -1 if not found
+static int PropertyOffset(asITypeInfo *type, const char *name)
+{
+	for( asUINT n = 0; type && n < type->GetPropertyCount(); n++ )
+	{
+		const char *propName;
+		int offset;
+		type->GetProperty(n, &propName, 0, 0, 0, &offset);
+		if( strcmp(propName, name) == 0 )
+			return offset;
+	}
+	return -1;
 }
 
 static int RegisterVec16(asIScriptEngine *engine)
@@ -373,6 +394,211 @@ bool Test()
 			PRINTF("%s", bout.buffer.c_str());
 			TEST_FAILED;
 		}
+	}
+
+	// Alignment of values as stored by the engine
+	{
+		engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+
+		RegisterVec16(engine);
+		engine->RegisterObjectType("ref", 0, asOBJ_REF | asOBJ_NOCOUNT);
+
+		if( engine->GetAlignmentOfType(asTYPEID_INT8) != 1 )
+			TEST_FAILED;
+		if( engine->GetAlignmentOfType(asTYPEID_INT16) != 2 )
+			TEST_FAILED;
+		if( engine->GetAlignmentOfType(asTYPEID_DOUBLE) != 8 )
+			TEST_FAILED;
+		if( engine->GetAlignmentOfType(engine->GetTypeIdByDecl("vec16")) != 16 )
+			TEST_FAILED;
+		// Reference types and handles are stored as pointers
+		if( engine->GetAlignmentOfType(engine->GetTypeIdByDecl("ref")) != sizeof(void*) )
+			TEST_FAILED;
+		if( engine->GetAlignmentOfType(engine->GetTypeIdByDecl("ref@")) != sizeof(void*) )
+			TEST_FAILED;
+		// Type id 0 is a null handle in list buffers
+		if( engine->GetAlignmentOfType(0) != sizeof(void*) )
+			TEST_FAILED;
+
+		if( bout.buffer != "" )
+		{
+			PRINTF("%s", bout.buffer.c_str());
+			TEST_FAILED;
+		}
+
+		engine->ShutDownAndRelease();
+	}
+
+	// Members of script classes are naturally aligned, and the class takes the alignment of its most aligned member
+	{
+		engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+
+		r = engine->RegisterObjectType("pod16", (int)sizeof(Pod16), (int)alignof(Pod16), asOBJ_VALUE | asOBJ_POD);
+		if( r < 0 )
+			TEST_FAILED;
+		RegisterVec16(engine);
+
+		asIScriptModule *mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
+		mod->AddScriptSection("test",
+			"class Small { int8 a; } \n"
+			"class Mixed { int8 a; double b; int8 c; int16 d; int64 e; pod16 f; int8 g; vec16 h; Small @i; } \n"
+			"class Derived : Mixed { int8 j; pod16 k; } \n");
+		r = mod->Build();
+		if( r < 0 )
+			TEST_FAILED;
+		else
+		{
+			asITypeInfo *small = mod->GetTypeInfoByName("Small");
+			asITypeInfo *mixed = mod->GetTypeInfoByName("Mixed");
+			asITypeInfo *derived = mod->GetTypeInfoByName("Derived");
+
+			// Without members aligned to more than a pointer the class keeps the alignment of the script object
+			if( small->GetAlignment() != alignof(void*) )
+				TEST_FAILED;
+			if( mixed->GetAlignment() != 16 )
+				TEST_FAILED;
+			if( derived->GetAlignment() != 16 )
+				TEST_FAILED;
+
+			// Each member is placed at an offset that is a multiple of its alignment
+			struct { const char *name; int alignment; } members[] =
+			{
+				{"b", 8}, {"d", 2}, {"e", 8}, {"f", 16}, {"h", (int)sizeof(void*)}, {"i", (int)sizeof(void*)}
+			};
+			for( asUINT n = 0; n < sizeof(members)/sizeof(members[0]); n++ )
+			{
+				int offset = PropertyOffset(mixed, members[n].name);
+				if( offset < 0 || offset % members[n].alignment != 0 )
+				{
+					PRINTF("Member '%s' is at offset %d, which is not aligned to %d\n", members[n].name, offset, members[n].alignment);
+					TEST_FAILED;
+				}
+			}
+
+			// No more padding than necessary, the members follow each other closely
+			if( PropertyOffset(mixed, "c") != PropertyOffset(mixed, "b") + 8 )
+				TEST_FAILED;
+			if( PropertyOffset(mixed, "d") != PropertyOffset(mixed, "c") + 2 )
+				TEST_FAILED;
+
+			// The derived class keeps the layout of the base class
+			const char *baseMembers[] = {"a", "b", "c", "d", "e", "f", "g", "h", "i"};
+			for( asUINT n = 0; n < sizeof(baseMembers)/sizeof(baseMembers[0]); n++ )
+			{
+				if( PropertyOffset(derived, baseMembers[n]) != PropertyOffset(mixed, baseMembers[n]) )
+					TEST_FAILED;
+			}
+			if( PropertyOffset(derived, "k") % 16 != 0 )
+				TEST_FAILED;
+
+			// The members are also aligned in memory, as the object is allocated with the class alignment
+			asIScriptObject *obj = (asIScriptObject*)engine->CreateScriptObject(derived);
+			if( obj == 0 )
+				TEST_FAILED;
+			else
+			{
+				for( asUINT n = 0; n < obj->GetPropertyCount(); n++ )
+				{
+					const char *name = obj->GetPropertyName(n);
+					if( (strcmp(name, "f") == 0 || strcmp(name, "k") == 0) && (uintptr_t)obj->GetAddressOfProperty(n) % 16 )
+					{
+						PRINTF("Member '%s' is not aligned in memory\n", name);
+						TEST_FAILED;
+					}
+				}
+				obj->Release();
+			}
+		}
+
+		if( bout.buffer != "" )
+		{
+			PRINTF("%s", bout.buffer.c_str());
+			TEST_FAILED;
+		}
+
+		engine->ShutDownAndRelease();
+	}
+
+	// Values in initialization lists are naturally aligned, and the list factories find them
+	{
+		engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+
+		RegisterStdString(engine);
+		RegisterScriptArray(engine, false);
+		RegisterScriptDictionary(engine);
+		RegisterVec16(engine);
+		engine->RegisterGlobalFunction("void assert(bool)", asFUNCTION(Assert), asCALL_GENERIC);
+
+		const char *script =
+			"class Obj { int v; Obj(int a) { v = a; } } \n"
+			"void main() \n"
+			"{ \n"
+			"  array<double> d = {1.5, 2.5, 3.5}; \n"
+			"  assert( d.length() == 3 && d[0] == 1.5 && d[2] == 3.5 ); \n"
+			"  array<int8> b = {1, 2, 3}; \n"
+			"  assert( b.length() == 3 && b[2] == 3 ); \n"
+			"  array<Obj@> h = {Obj(1), null, Obj(3)}; \n"
+			"  assert( h.length() == 3 && h[0].v == 1 && h[1] is null && h[2].v == 3 ); \n"
+			"  array<array<double>> n = {{1.5}, {2.5, 3.5}}; \n"
+			"  assert( n.length() == 2 && n[1][1] == 3.5 ); \n"
+			// Empty elements are default constructed directly in the list buffer
+			"  array<vec16> v = {,,}; \n"
+			"  assert( v.length() == 3 ); \n"
+			// A null in a ? position must not shift the values that follow it
+			"  dictionary dict = {{'a', int8(1)}, {'b', null}, {'c', 2.5}, {'d', int16(4)}, {'e', 5.5}}; \n"
+			"  assert( int8(dict['a']) == 1 ); \n"
+			"  assert( double(dict['c']) == 2.5 ); \n"
+			"  assert( int16(dict['d']) == 4 ); \n"
+			"  assert( double(dict['e']) == 5.5 ); \n"
+			"} \n";
+
+		asIScriptModule *mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
+		mod->AddScriptSection("test", script);
+		r = mod->Build();
+		if( r < 0 )
+			TEST_FAILED;
+
+		g_misalignedVec16 = 0;
+		r = ExecuteString(engine, "main()", mod);
+		if( r != asEXECUTION_FINISHED )
+			TEST_FAILED;
+		if( g_misalignedVec16 != 0 )
+		{
+			PRINTF("%d vec16 instances were not aligned\n", g_misalignedVec16);
+			TEST_FAILED;
+		}
+
+		// The same must work after saving and loading the bytecode, which recalculates the list layout
+		CBytecodeStream stream("test");
+		r = mod->SaveByteCode(&stream);
+		if( r < 0 )
+			TEST_FAILED;
+		mod = engine->GetModule("loaded", asGM_ALWAYS_CREATE);
+		r = mod->LoadByteCode(&stream);
+		if( r < 0 )
+			TEST_FAILED;
+		r = ExecuteString(engine, "main()", mod);
+		if( r != asEXECUTION_FINISHED )
+			TEST_FAILED;
+		if( g_misalignedVec16 != 0 )
+		{
+			PRINTF("%d vec16 instances were not aligned after loading\n", g_misalignedVec16);
+			TEST_FAILED;
+		}
+
+		if( bout.buffer != "" )
+		{
+			PRINTF("%s", bout.buffer.c_str());
+			TEST_FAILED;
+		}
+
+		engine->ShutDownAndRelease();
 	}
 
 	return fail;
