@@ -1778,12 +1778,12 @@ const asSBCInfo asBCInfo[256] =
 {
 	asBCINFO(PopPtr,	NO_ARG,			-AS_PTR_SIZE, 0),
 	asBCINFO(PshGPtr,	PTR_ARG,		AS_PTR_SIZE,  AS_PTR_SIZE*4),
-	asBCINFO(PshC4,		DW_ARG,			1,            4),
-	asBCINFO(PshV4,		rW_ARG,			1,            4),
+	asBCINFO(PshC4,		DW_ARG,			2,            4), // All values pushed on the stack take up 8 bytes
+	asBCINFO(PshV4,		rW_ARG,			2,            4),
 	asBCINFO(PSF,		rW_ARG,			AS_PTR_SIZE,  AS_PTR_SIZE*4),
 	asBCINFO(SwapPtr,	NO_ARG,			0,            AS_PTR_SIZE*4),
 	asBCINFO(NOT,		rW_ARG,			0,            4),
-	asBCINFO(PshG4,		PTR_ARG,		1,            4),
+	asBCINFO(PshG4,		PTR_ARG,		2,            4),
 	asBCINFO(LdGRdR4,	wW_PTR_ARG,		0,            4),
 	asBCINFO(CALL,		DW_ARG,			0xFFFF,       0),
 	asBCINFO(RET,		W_ARG,			0xFFFF,       0),
@@ -1852,7 +1852,7 @@ const asSBCInfo asBCInfo[256] =
 	asBCINFO(PshNull,	NO_ARG,			AS_PTR_SIZE,  AS_PTR_SIZE*4),
 	asBCINFO(ClrVPtr,	wW_ARG,			0,            AS_PTR_SIZE*4),
 	asBCINFO(OBJTYPE,	PTR_ARG,		AS_PTR_SIZE,  AS_PTR_SIZE*4),
-	asBCINFO(TYPEID,	DW_ARG,			1,            4),
+	asBCINFO(TYPEID,	DW_ARG,			2,            4),
 	asBCINFO(SetV4,		wW_DW_ARG,		0,            4),
 	asBCINFO(SetV8,		wW_QW_ARG,		0,            8),
 	asBCINFO(ADDSi,		W_DW_ARG,		0,            4),
@@ -1976,7 +1976,7 @@ const asSBCInfo asBCInfo[256] =
 	asBCINFO(POWdi,		wW_rW_rW_ARG,	0,            8),
 	asBCINFO(POWi64,	wW_rW_rW_ARG,	0,            8),
 	asBCINFO(POWu64,	wW_rW_rW_ARG,	0,            8),
-	asBCINFO(Thiscall1, DW_ARG,			-AS_PTR_SIZE-1, 0),
+	asBCINFO(Thiscall1, DW_ARG,			-AS_PTR_SIZE-2, 0),
 
 	asBCINFO_DUMMY(201),
 	asBCINFO_DUMMY(202),
