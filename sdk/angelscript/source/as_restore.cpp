@@ -48,6 +48,12 @@ BEGIN_AS_NAMESPACE
 #define SAVE_TO_BIT(dst, val, bit) ((dst) |= ((val) << (bit)))
 #define LOAD_FROM_BIT(dst, val, bit) ((dst) = ((val) >> (bit)) & 1)
 
+// The saved bytecode starts with these values, so bytecode that was saved by an incompatible
+// version of the library is rejected when loading it. The version must be incremented whenever
+// the format of the saved bytecode changes.
+static const asDWORD BYTECODE_MAGIC   = 0x41534246; // The stream starts with the characters "ASBF"
+static const asDWORD BYTECODE_VERSION = 1;
+
 asCReader::asCReader(asCModule* _module, asIBinaryStream* _stream, asCScriptEngine* _engine)
 	: module(_module), stream(_stream), engine(_engine), noDebugInfo(false), error(false), bytesRead(0), lastCompositeProp(0)
 {
@@ -143,6 +149,19 @@ int asCReader::ReadInner()
 	// This function will load each entity one by one from the stream.
 	// If any error occurs, it will return to the caller who is
 	// responsible for cleaning up the partially loaded entities.
+
+	// Verify that the bytecode was saved by a compatible version of the library
+	asDWORD magic = 0, version = 0;
+	ReadData(&magic, 4);
+	if( !error )
+		ReadData(&version, 4);
+	if( error )
+		return asERROR;
+	if( magic != BYTECODE_MAGIC || version != BYTECODE_VERSION )
+	{
+		Error(TXT_INCOMPATIBLE_BYTECODE);
+		return asERROR;
+	}
 
 	engine->deferValidationOfTemplateTypes = true;
 
@@ -3691,68 +3710,79 @@ void asCReader::CalculateStackNeeded(asCScriptFunction *func)
 	func->scriptData->stackNeeded = largestStackUsed + func->GetFrameRealignmentDWords();
 }
 
+// Returns the local variables of the function, one for each position on the stack, ordered by
+// the position. Variables in different scopes can share the same position, but then they have the same type
+static void GetLocalVariableSlots(asCScriptFunction *func, asCArray<asSScriptVariable*> &slots)
+{
+	slots.SetLength(0);
+	for( asUINT n = 0; n < func->scriptData->variables.GetLength(); n++ )
+	{
+		asSScriptVariable *var = func->scriptData->variables[n];
+
+		// Skip the function parameters
+		if( var->stackOffset <= 0 )
+			continue;
+
+		// Find where to insert the variable to keep the list ordered
+		asUINT pos = 0;
+		while( pos < slots.GetLength() && slots[pos]->stackOffset < var->stackOffset )
+			pos++;
+		if( pos < slots.GetLength() && slots[pos]->stackOffset == var->stackOffset )
+			continue;
+
+		slots.PushLast(0);
+		for( asUINT m = slots.GetLength() - 1; m > pos; m-- )
+			slots[m] = slots[m-1];
+		slots[pos] = var;
+	}
+}
+
 void asCReader::CalculateAdjustmentByPos(asCScriptFunction *func)
 {
 	// The arguments are stored in slots of 8 bytes, which is the same on all supported platforms,
 	// so the offsets of the parameters have been saved as is and don't need any adjustment
 	asUINT n;
-	asCArray<int> adjustments;
 	asUINT offset = (func->objectType ? AS_PTR_SIZE : 0) + (func->DoesReturnOnStack() ? AS_PTR_SIZE : 0) + func->GetSpaceNeededForArguments();
 	adjustNegativeStackByPos.SetLength(offset);
 	memset(adjustNegativeStackByPos.AddressOf(), 0, adjustNegativeStackByPos.GetLength()*sizeof(int));
 
-	// The bytecode has been stored as if all object variables take up only 1 dword.
-	// It is necessary to adjust to the size according to the current platform.
-	adjustments.SetLength(0);
-	int highestPos = 0;
-	for (n = 0; n < func->scriptData->variables.GetLength(); n++)
+	// The bytecode has been stored as if all object variables and handles take up only 1 dword,
+	// and without any padding between the variables. The layout must be recomputed with the sizes
+	// and alignments of the types on the current platform, in the same way the compiler does it.
+	asCArray<asSScriptVariable*> slots;
+	GetLocalVariableSlots(func, slots);
+
+	int realEnd = 0; // The last dword used by the previous variable in the real layout
+	int normEnd = 0; // The last dword used by the previous variable in the saved layout
+	adjustByPos.SetLength(1);
+	adjustByPos[0] = 0;
+	for( n = 0; n < slots.GetLength(); n++ )
 	{
-		// Skip function parameters as these are adjusted by adjustNegativeStackByPos
-		if (func->scriptData->variables[n]->stackOffset <= 0)
-			continue;
+		int size      = slots[n]->type.GetSizeOfLocalDWords(slots[n]->onHeap);
+		int alignment = slots[n]->type.GetAlignmentOfLocalDWords(slots[n]->onHeap);
+		int normSize  = (slots[n]->type.IsObject() || slots[n]->type.IsObjectHandle()) ? 1 : size;
+		int normLast  = slots[n]->stackOffset;
 
-		asCDataType t = func->scriptData->variables[n]->type;
-		if (!t.IsObject() && !t.IsObjectHandle())
-			continue;
-
-		// Determing the size of the variable currently occupies on the stack
-		int size = AS_PTR_SIZE;
-		if (t.GetTypeInfo() && (t.GetTypeInfo()->GetFlags() & asOBJ_VALUE) && !func->scriptData->variables[n]->onHeap)
-			size = t.GetSizeInMemoryDWords();
-
-		// Check if type has a different size than stored
-		if (size > 1)
+		// The saved layout has no gaps between the variables
+		if( normLast - normSize != normEnd )
 		{
-			if (func->scriptData->variables[n]->stackOffset > highestPos)
-				highestPos = func->scriptData->variables[n]->stackOffset;
-
-			adjustments.PushLast(func->scriptData->variables[n]->stackOffset);
-			adjustments.PushLast(size - 1);
+			Error(TXT_INVALID_BYTECODE_d);
+			return;
 		}
+
+		int realLast = alignOffset(realEnd + size, alignment);
+
+		// Positions up to the end of this variable are moved by the same amount
+		adjustByPos.SetLength(normLast+1);
+		for( int p = normEnd + 1; p <= normLast; p++ )
+			adjustByPos[p] = realLast - normLast;
+
+		realEnd = realLast;
+		normEnd = normLast;
 	}
 
-	// Count position 0 too
-	adjustByPos.SetLength(highestPos+1);
-	memset(adjustByPos.AddressOf(), 0, adjustByPos.GetLength()*sizeof(int));
-
-	// Build look-up table with the adjustments for each stack position
-	for( n = 0; n < adjustments.GetLength(); n+=2 )
-	{
-		int pos    = adjustments[n];
-		int adjust = adjustments[n+1];
-
-		// If multiple variables in different scope occupy the same position they must have the same size
-		asASSERT(adjustByPos[pos] == 0 || adjustByPos[pos] == adjust);
-
-		adjustByPos[pos] = adjust;
-	}
-	// Accumulate adjustments
-	int adjust = adjustByPos[0];
-	for (asUINT i = 1; i < adjustByPos.GetLength(); i++)
-	{
-		adjust += adjustByPos[i];
-		adjustByPos[i] = adjust;
-	}
+	// Positions above the variables are moved by the same amount as the last variable,
+	// which AdjustStackPosition does by using the last entry in the table
 }
 
 int asCReader::AdjustStackPosition(int pos)
@@ -3853,6 +3883,10 @@ int asCWriter::Write()
 	// TODO: Should be possible to skip saving the enum values. They are usually not needed after the script is compiled anyway
 	// TODO: Should be possible to skip saving the typedefs. They are usually not needed after the script is compiled anyway
 	// TODO: Should be possible to skip saving constants. They are usually not needed after the script is compiled anyway
+
+	// Identify the format so incompatible bytecode can be rejected when loading it
+	WriteData(&BYTECODE_MAGIC, 4);
+	WriteData(&BYTECODE_VERSION, 4);
 
 	// Write the flag as 1byte even on platforms with 4byte booleans
 	WriteEncodedInt64(stripDebugInfo ? 1 : 0);
@@ -4739,58 +4773,46 @@ void asCWriter::CalculateAdjustmentByPos(asCScriptFunction *func)
 	// The arguments are stored in slots of 8 bytes, which is the same on all supported platforms,
 	// so the offsets of the parameters are saved as is and don't need any adjustment
 	asUINT n;
-	asCArray<int> adjustments;
 	asUINT offset = (func->objectType ? AS_PTR_SIZE : 0) + (func->DoesReturnOnStack() ? AS_PTR_SIZE : 0) + func->GetSpaceNeededForArguments();
 	adjustNegativeStackByPos.SetLength(offset);
 	memset(adjustNegativeStackByPos.AddressOf(), 0, adjustNegativeStackByPos.GetLength()*sizeof(int));
 
-	// Adjust the offset of all positive variables so that all object types and handles have a size of 1 dword
-	// This is similar to how the adjustment is done in the asCReader::TranslateFunction, only the reverse
-	adjustments.SetLength(0);
-	for (n = 0; n < func->scriptData->variables.GetLength(); n++)
-	{
-		// Skip function parameters as these are adjusted by adjustNegativeStackByPos
-		if (func->scriptData->variables[n]->stackOffset <= 0)
-			continue;
+	// The local variables are saved as if all object variables and handles take up only 1 dword,
+	// and without any padding between the variables. This makes the saved bytecode independent of
+	// the platform, as the sizes and alignments of value types can differ between platforms. The
+	// layout is recomputed for the platform when the bytecode is loaded, see asCReader.
+	asCArray<asSScriptVariable*> slots;
+	GetLocalVariableSlots(func, slots);
 
-		asCDataType t = func->scriptData->variables[n]->type;
-		if (!t.IsObject() && !t.IsObjectHandle())
-			continue;
-
-		// Determing the size of the variable currently occupies on the stack
-		int size = AS_PTR_SIZE;
-		if (t.GetTypeInfo() && (t.GetTypeInfo()->GetFlags() & asOBJ_VALUE) && !func->scriptData->variables[n]->onHeap)
-			size = t.GetSizeInMemoryDWords();
-
-		// If larger than 1 dword, adjust the offsets accordingly
-		if (size > 1)
-		{
-			// How much needs to be adjusted?
-			adjustments.PushLast(func->scriptData->variables[n]->stackOffset);
-			adjustments.PushLast(-(size - 1));
-		}
-	}
-
-	// Build look-up table with the adjustments for each stack position
+	int realEnd = 0; // The last dword used by the previous variable in the real layout
+	int normEnd = 0; // The last dword used by the previous variable in the saved layout
 	adjustStackByPos.SetLength(func->scriptData->stackNeeded+AS_PTR_SIZE); // Add space for a pointer stored in a temporary variable
 	memset(adjustStackByPos.AddressOf(), 0, adjustStackByPos.GetLength()*sizeof(int));
-	for( n = 0; n < adjustments.GetLength(); n+=2 )
+	for( n = 0; n < slots.GetLength(); n++ )
 	{
-		int pos    = adjustments[n];
-		int adjust = adjustments[n+1];
+		int size     = slots[n]->type.GetSizeOfLocalDWords(slots[n]->onHeap);
+		int realLast = slots[n]->stackOffset;
 
-		// If more than one variable in different scopes occupy the same position on the stack they must have the same size
-		asASSERT(adjustStackByPos[pos] == 0 || adjustStackByPos[pos] == adjust);
+		// Only padding is expected between the variables, as all variables are known
+		asASSERT( realLast - size + 1 > realEnd );
+		asASSERT( realLast - size - realEnd < slots[n]->type.GetAlignmentOfLocalDWords(slots[n]->onHeap) );
 
-		adjustStackByPos[pos] = adjust;
+		int normSize = (slots[n]->type.IsObject() || slots[n]->type.IsObjectHandle()) ? 1 : size;
+		int normLast = normEnd + normSize;
+
+		// Positions up to the end of this variable, including the padding before it, are moved by the same amount
+		if( asUINT(realLast) >= adjustStackByPos.GetLength() )
+			adjustStackByPos.SetLength(realLast+1);
+		for( int p = realEnd + 1; p <= realLast; p++ )
+			adjustStackByPos[p] = normLast - realLast;
+
+		realEnd = realLast;
+		normEnd = normLast;
 	}
-	// Accumulate adjustments 
-	int adjust = adjustStackByPos[0];
-	for (asUINT i = 1; i < adjustStackByPos.GetLength(); i++)
-	{
-		adjust += adjustStackByPos[i];
-		adjustStackByPos[i] = adjust;
-	}
+
+	// Positions above the variables are moved by the same amount as the last variable
+	for( asUINT p = realEnd + 1; p < adjustStackByPos.GetLength(); p++ )
+		adjustStackByPos[p] = normEnd - realEnd;
 
 	// Compute the sequence number of each bytecode instruction in order to update the jump offsets
 	asUINT length = func->scriptData->byteCode.GetLength() + 1; // accomodate one more for invisible instructions, e.g. scope end
