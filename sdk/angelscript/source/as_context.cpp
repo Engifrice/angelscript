@@ -5965,6 +5965,16 @@ int asCContext::CallGeneric(asCScriptFunction *descr)
 		m_engine->CallObjectMethod(m_regs.objectRegister, CastToObjectType(descr->returnType.GetTypeInfo())->beh.addref);
 	}
 
+	// Clean-up the returned handle if there is an exception, same as for native calls
+	if( m_status == asEXECUTION_EXCEPTION && m_regs.objectRegister && descr->returnType.IsObjectHandle() )
+	{
+		if( descr->returnType.IsFuncdef() )
+			reinterpret_cast<asIScriptFunction*>(m_regs.objectRegister)->Release();
+		else if( CastToObjectType(descr->returnType.GetTypeInfo())->beh.release )
+			m_engine->CallObjectMethod(m_regs.objectRegister, CastToObjectType(descr->returnType.GetTypeInfo())->beh.release);
+		m_regs.objectRegister = 0;
+	}
+
 	// Clean up arguments
 	const asUINT cleanCount = sysFunc->cleanArgs.GetLength();
 	if( cleanCount )
