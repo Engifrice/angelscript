@@ -1612,7 +1612,10 @@ void asCReader::ReadTypeDeclaration(asCTypeInfo *type, int phase, bool *isExtern
 
 		// Reset the size of script classes, since it will be recalculated as properties are added
 		if( (type->flags & asOBJ_SCRIPT_OBJECT) && type->size != 0 )
+		{
 			type->size = sizeof(asCScriptObject);
+			type->alignment = alignof(asCScriptObject);
+		}
 
 		asCObjectType *ot = CastToObjectType(type);
 		if (ot)
@@ -1667,6 +1670,7 @@ void asCReader::ReadTypeDeclaration(asCTypeInfo *type, int phase, bool *isExtern
 				return;
 			}
 			t->enumType = asCDataType::CreatePrimitive(tt, false);
+			t->alignment = t->enumType.GetAlignment();
 
 			int count = SanityCheck(ReadEncodedUInt(), 1000000);
 			bool sharedExists = existingShared.MoveTo(0, type);
@@ -1722,6 +1726,7 @@ void asCReader::ReadTypeDeclaration(asCTypeInfo *type, int phase, bool *isExtern
 			asASSERT(td);
 			eTokenType t = (eTokenType)ReadEncodedUInt();
 			td->aliasForType = asCDataType::CreatePrimitive(t, false);
+			td->alignment = td->aliasForType.GetAlignment();
 		}
 		else
 		{
