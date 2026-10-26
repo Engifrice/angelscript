@@ -4100,8 +4100,7 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 		asSListPatternNode *nextNode = patternNode;
 
 		// Align the buffer size to 4 bytes in case previous value was smaller than 4 bytes
-		if( bufferSize & 0x3 )
-			bufferSize += 4 - (bufferSize & 0x3);
+		bufferSize = alignOffset(bufferSize, 4);
 
 		// The first dword will hold the number of elements in the list
 		asDWORD currSize = bufferSize;
@@ -4203,9 +4202,8 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 					dt.MakeReadOnly(false);
 					dt.MakeReference(false);
 
-					// Values on the list must be aligned to 32bit boundaries, except if the type is smaller than 32bit.
-					if( bufferSize & 0x3 )
-						bufferSize += 4 - (bufferSize & 0x3);
+					// The type id is aligned to 4 bytes, and the value that follows it is aligned to its own alignment
+					bufferSize = alignOffset(bufferSize, 4);
 
 					// When value assignment for reference types us disabled, make sure all ref types are passed in as handles
 					if (engine->ep.disallowValueAssignForRefType && dt.SupportHandles())
@@ -4254,15 +4252,8 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 				}
 			}
 
-			// Determine size of the element
-			if( dt.IsPrimitive() || (!dt.IsNullHandle() && (dt.GetTypeInfo()->flags & asOBJ_VALUE)) )
-				size = dt.GetSizeInMemoryBytes();
-			else
-				size = AS_PTR_SIZE*4;
-
-			// Values on the list must be aligned to 32bit boundaries, except if the type is smaller than 32bit.
-			if( size >= 4 && (bufferSize & 0x3) )
-				bufferSize += 4 - (bufferSize & 0x3);
+			// Values on the list are aligned to their natural alignment
+			bufferSize = alignOffset(bufferSize, dt.GetAlignment());
 
 			// Compile the lvalue
 			lctx.bc.InstrSHORT_DW(asBC_PshListElmnt, bufferVar, bufferSize);
@@ -4361,9 +4352,8 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 				// There is no specific value so we need to fill it with a default value
 				if( dt.GetTokenType() == ttQuestion )
 				{
-					// Values on the list must be aligned to 32bit boundaries, except if the type is smaller than 32bit.
-					if( bufferSize & 0x3 )
-						bufferSize += 4 - (bufferSize & 0x3);
+					// The type id is aligned to 4 bytes
+					bufferSize = alignOffset(bufferSize, 4);
 
 					// Place the type id for a null handle in the buffer
 					bcInit.InstrSHORT_DW_DW(asBC_SetListType, bufferVar, bufferSize, 0);
@@ -4387,9 +4377,8 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 					}
 					else if( func )
 					{
-						// Values on the list must be aligned to 32bit boundaries, except if the type is smaller than 32bit.
-						if( bufferSize & 0x3 )
-							bufferSize += 4 - (bufferSize & 0x3);
+						// Values on the list are aligned to their natural alignment
+						bufferSize = alignOffset(bufferSize, dt.GetAlignment());
 
 						// Call the constructor as a normal function
 						bcInit.InstrSHORT_DW(asBC_PshListElmnt, bufferVar, bufferSize);
@@ -4416,9 +4405,8 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 						asCExprContext rctx(engine);
 						PerformFunctionCall(func, &rctx, false, 0, CastToObjectType(dt.GetTypeInfo()));
 
-						// Values on the list must be aligned to 32bit boundaries, except if the type is smaller than 32bit.
-						if( bufferSize & 0x3 )
-							bufferSize += 4 - (bufferSize & 0x3);
+						// Values on the list are aligned to their natural alignment
+						bufferSize = alignOffset(bufferSize, dt.GetAlignment());
 
 						asCExprContext lctx(engine);
 						lctx.bc.InstrSHORT_DW(asBC_PshListElmnt, bufferVar, bufferSize);
@@ -4446,12 +4434,12 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 
 		if( !isEmpty )
 		{
-			// Determine size of the element
-			if( dt.IsPrimitive() || (!dt.IsNullHandle() && (dt.GetTypeInfo()->flags & asOBJ_VALUE)) )
-				size = dt.GetSizeInMemoryBytes();
-			else
-				size = AS_PTR_SIZE*4;
-			asASSERT( size <= 4 || (size & 0x3) == 0 );
+			// Align the element in case no code was generated for it above, e.g.
+			// for default values that are just zeroes. Otherwise this does nothing
+			bufferSize = alignOffset(bufferSize, dt.GetAlignment());
+
+			size = dt.GetSizeInListBuffer();
+			asASSERT( (size % dt.GetAlignment()) == 0 );
 
 			bufferSize += size;
 		}
