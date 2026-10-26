@@ -120,6 +120,16 @@ target_compile_definitions(${ANGELSCRIPT_LIBRARY_NAME} PUBLIC AS_MAX_PORTABILITY
 
 target_compile_features(${ANGELSCRIPT_LIBRARY_NAME} PRIVATE cxx_std_11)
 
+# The library relies on pointer casts that don't guarantee strict aliasing, see the manual
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
+    target_compile_options(${ANGELSCRIPT_LIBRARY_NAME} PRIVATE -fno-strict-aliasing)
+endif()
+
+# Applications linking with the shared library must import the functions from it
+if(BUILD_SHARED_LIBS)
+    target_compile_definitions(${ANGELSCRIPT_LIBRARY_NAME} INTERFACE ANGELSCRIPT_DLL_LIBRARY_IMPORT)
+endif()
+
 if(AS_NO_EXCEPTIONS)
 	target_compile_definitions(${ANGELSCRIPT_LIBRARY_NAME} PRIVATE AS_NO_EXCEPTIONS)
 endif()
