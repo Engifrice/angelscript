@@ -59,6 +59,18 @@ void  defaultAlignedFree(void *ptr, void *userParam);
 // Utility function used for assertions
 bool isAligned(const void* const pointer, asUINT alignment);
 
+// Rounds the offset up to the next multiple of the alignment, which must be a power of two
+inline asUINT alignOffset(asUINT offset, asUINT alignment)
+{
+	return (offset + alignment - 1) & ~(alignment - 1);
+}
+
+// Rounds the pointer up to the next multiple of the alignment, which must be a power of two
+inline asBYTE *alignPointer(asBYTE *ptr, asUINT alignment)
+{
+	return (asBYTE*)((asPWORD(ptr) + alignment - 1) & ~asPWORD(alignment - 1));
+}
+
 // We don't overload the new operator as that would affect the application as well
 
 #ifndef AS_DEBUG
