@@ -92,6 +92,12 @@ void CScriptDictionary::Init(asIScriptEngine *e)
 	engine->NotifyGarbageCollectorOfNewObject(this, cache->dictType);
 }
 
+// Rounds the pointer up to the next multiple of the alignment
+static asBYTE *AlignBuffer(asBYTE *buffer, asUINT alignment)
+{
+	return buffer + ((alignment - (asPWORD(buffer) & (alignment - 1))) & (alignment - 1));
+}
+
 CScriptDictionary::CScriptDictionary(asBYTE *buffer)
 {
 	// This constructor will always be called from a script
@@ -107,12 +113,14 @@ CScriptDictionary::CScriptDictionary(asBYTE *buffer)
 	asUINT length = *(asUINT*)buffer;
 	buffer += 4;
 
+	// Each value in the buffer is aligned to its own alignment. The key is stored inline if it
+	// is a value type, or as a pointer if it is a reference type, and the type id of the value
+	// is aligned to 4 bytes
+	asUINT keyAlignment = keyAsRef ? asUINT(sizeof(void*)) : cache.keyType->GetAlignment();
+
 	while( length-- )
 	{
-		// Align the buffer pointer on a 4 byte boundary in
-		// case previous value was smaller than 4 bytes
-		if( asPWORD(buffer) & 0x3 )
-			buffer += 4 - (asPWORD(buffer) & 0x3);
+		buffer = AlignBuffer(buffer, keyAlignment);
 
 		// Get the name value pair from the buffer and insert it in the dictionary
 		dictKey_t name;
@@ -128,10 +136,12 @@ CScriptDictionary::CScriptDictionary(asBYTE *buffer)
 		}
 
 		// Get the type id of the value
+		buffer = AlignBuffer(buffer, 4);
 		int typeId = *(int*)buffer;
 		buffer += sizeof(int);
 
 		// Depending on the type id, the value will inline in the buffer or a pointer
+		buffer = AlignBuffer(buffer, engine->GetAlignmentOfType(typeId));
 		void *ref = (void*)buffer;
 
 		if( typeId >= asTYPEID_INT8 && typeId <= asTYPEID_DOUBLE )

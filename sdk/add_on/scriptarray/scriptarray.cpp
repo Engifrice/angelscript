@@ -426,6 +426,11 @@ CScriptArray::CScriptArray(asITypeInfo *ti, void *buf)
 	// Determine the initial size from the buffer
 	asUINT length = *(asUINT*)buf;
 
+	// The values follow the length, aligned to the alignment of the element type
+	asUINT alignment = engine->GetAlignmentOfType(ti->GetSubTypeId());
+	asBYTE *values = (asBYTE*)buf + 4;
+	values += (alignment - (asPWORD(values) & (alignment - 1))) & (alignment - 1);
+
 	// Make sure the array size isn't too large for us to handle
 	if( !CheckMaxSize(length) )
 	{
@@ -440,7 +445,7 @@ CScriptArray::CScriptArray(asITypeInfo *ti, void *buf)
 
 		// Copy the values of the primitive type into the internal buffer
 		if( length > 0 )
-			memcpy(At(0), (((asUINT*)buf)+1), size_t(length) * elementSize);
+			memcpy(At(0), values, size_t(length) * elementSize);
 	}
 	else if( ti->GetSubTypeId() & asTYPEID_OBJHANDLE )
 	{
@@ -448,13 +453,13 @@ CScriptArray::CScriptArray(asITypeInfo *ti, void *buf)
 
 		// Copy the handles into the internal buffer
 		if( length > 0 )
-			memcpy(At(0), (((asUINT*)buf)+1), size_t(length) * elementSize);
+			memcpy(At(0), values, size_t(length) * elementSize);
 
 		// With object handles it is safe to clear the memory in the received buffer
 		// instead of increasing the ref count. It will save time both by avoiding the
 		// call the increase ref, and also relieve the engine from having to release
 		// its references too
-		memset((((asUINT*)buf)+1), 0, size_t(length) * elementSize);
+		memset(values, 0, size_t(length) * elementSize);
 	}
 	else if( ti->GetSubType()->GetFlags() & asOBJ_REF )
 	{
@@ -465,11 +470,11 @@ CScriptArray::CScriptArray(asITypeInfo *ti, void *buf)
 
 		// Copy the handles into the internal buffer
 		if( length > 0 )
-			memcpy(buffer->data, (((asUINT*)buf)+1), size_t(length) * elementSize);
+			memcpy(buffer->data, values, size_t(length) * elementSize);
 
 		// For ref types we can do the same as for handles, as they are
 		// implicitly stored as handles.
-		memset((((asUINT*)buf)+1), 0, size_t(length) * elementSize);
+		memset(values, 0, size_t(length) * elementSize);
 	}
 	else
 	{
@@ -484,8 +489,7 @@ CScriptArray::CScriptArray(asITypeInfo *ti, void *buf)
 		for( asUINT n = 0; n < length; n++ )
 		{
 			void *obj = At(n);
-			asBYTE *srcObj = (asBYTE*)buf;
-			srcObj += 4 + n*ti->GetSubType()->GetSize();
+			asBYTE *srcObj = values + n*ti->GetSubType()->GetSize();
 			engine->AssignScriptObject(obj, srcObj, ti->GetSubType());
 		}
 	}

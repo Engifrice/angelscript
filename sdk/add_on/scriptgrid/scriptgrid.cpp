@@ -257,6 +257,12 @@ static void RegisterScriptGrid_Native(asIScriptEngine *engine)
 	r = engine->RegisterObjectBehaviour("grid<T>", asBEHAVE_RELEASEREFS, "void f(int&in)", asMETHOD(CScriptGrid, ReleaseAllHandles), asCALL_THISCALL); assert( r >= 0 );
 }
 
+// Rounds the pointer up to the next multiple of the alignment
+static asBYTE *AlignBuffer(asBYTE *buffer, asUINT alignment)
+{
+	return buffer + ((alignment - (asPWORD(buffer) & (alignment - 1))) & (alignment - 1));
+}
+
 CScriptGrid::CScriptGrid(asITypeInfo *ti, void *buf)
 {
 	refCount = 1;
@@ -285,6 +291,9 @@ CScriptGrid::CScriptGrid(asITypeInfo *ti, void *buf)
 		return;
 	}
 
+	// Each row starts with its length, followed by the values aligned to the alignment of the element type
+	asUINT alignment = ti->GetEngine()->GetAlignmentOfType(ti->GetSubTypeId());
+
 	// Skip the height value at the start of the buffer
 	buf = (asUINT*)(buf)+1;
 
@@ -296,8 +305,9 @@ CScriptGrid::CScriptGrid(asITypeInfo *ti, void *buf)
 		// Copy the values of the primitive type into the internal buffer
 		for( asUINT y = 0; y < height; y++ )
 		{
-			// Skip the length value at the start of each row
-			buf = (asUINT*)(buf)+1;
+			// Skip the length value at the start of each row, and align to the elements
+			buf = AlignBuffer((asBYTE*)(buf), 4) + 4;
+			buf = AlignBuffer((asBYTE*)(buf), alignment);
 
 			// Copy the line
 			if( width > 0 )
@@ -305,10 +315,6 @@ CScriptGrid::CScriptGrid(asITypeInfo *ti, void *buf)
 
 			// Move to next line
 			buf = (char*)(buf) + size_t(width)*elementSize;
-
-			// Align to 4 byte boundary
-			if( asPWORD(buf) & 0x3 )
-				buf = (char*)(buf) + 4 - (asPWORD(buf) & 0x3);
 		}
 	}
 	else if( ti->GetSubTypeId() & asTYPEID_OBJHANDLE )
@@ -318,8 +324,9 @@ CScriptGrid::CScriptGrid(asITypeInfo *ti, void *buf)
 		// Copy the handles into the internal buffer
 		for( asUINT y = 0; y < height; y++ )
 		{
-			// Skip the length value at the start of each row
-			buf = (asUINT*)(buf)+1;
+			// Skip the length value at the start of each row, and align to the elements
+			buf = AlignBuffer((asBYTE*)(buf), 4) + 4;
+			buf = AlignBuffer((asBYTE*)(buf), alignment);
 
 			// Copy the line
 			if( width > 0 )
@@ -333,10 +340,6 @@ CScriptGrid::CScriptGrid(asITypeInfo *ti, void *buf)
 
 			// Move to next line
 			buf = (char*)(buf) + size_t(width)*elementSize;
-
-			// Align to 4 byte boundary
-			if( asPWORD(buf) & 0x3 )
-				buf = (char*)(buf) + 4 - (asPWORD(buf) & 0x3);
 		}
 	}
 	else if( ti->GetSubType()->GetFlags() & asOBJ_REF )
@@ -349,8 +352,9 @@ CScriptGrid::CScriptGrid(asITypeInfo *ti, void *buf)
 		// Copy the handles into the internal buffer
 		for( asUINT y = 0; y < height; y++ )
 		{
-			// Skip the length value at the start of each row
-			buf = (asUINT*)(buf)+1;
+			// Skip the length value at the start of each row, and align to the elements
+			buf = AlignBuffer((asBYTE*)(buf), 4) + 4;
+			buf = AlignBuffer((asBYTE*)(buf), alignment);
 
 			// Copy the line
 			if( width > 0 )
@@ -364,10 +368,6 @@ CScriptGrid::CScriptGrid(asITypeInfo *ti, void *buf)
 
 			// Move to next line
 			buf = (char*)(buf) + size_t(width)*elementSize;
-
-			// Align to 4 byte boundary
-			if( asPWORD(buf) & 0x3 )
-				buf = (char*)(buf) + 4 - (asPWORD(buf) & 0x3);
 		}
 	}
 	else
@@ -384,8 +384,9 @@ CScriptGrid::CScriptGrid(asITypeInfo *ti, void *buf)
 		asUINT subTypeSize = subType->GetSize();
 		for( asUINT y = 0;y < height; y++ )
 		{
-			// Skip the length value at the start of each row
-			buf = (asUINT*)(buf)+1;
+			// Skip the length value at the start of each row, and align to the elements
+			buf = AlignBuffer((asBYTE*)(buf), 4) + 4;
+			buf = AlignBuffer((asBYTE*)(buf), alignment);
 
 			// Call opAssign for each of the objects on the row
 			for( asUINT x = 0; x < width; x++ )
@@ -397,10 +398,6 @@ CScriptGrid::CScriptGrid(asITypeInfo *ti, void *buf)
 
 			// Move to next line
 			buf = (char*)(buf) + size_t(width)*subTypeSize;
-
-			// Align to 4 byte boundary
-			if( asPWORD(buf) & 0x3 )
-				buf = (char*)(buf) + 4 - (asPWORD(buf) & 0x3);
 		}
 	}
 
