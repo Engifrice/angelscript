@@ -3371,12 +3371,9 @@ int asCReader::SListAdjuster::AdjustOffset(int offset)
 	// What is being expected at this position?
 	if( patternNode->type == asLPT_REPEAT || patternNode->type == asLPT_REPEAT_SAME )
 	{
-		// Align the offset to 4 bytes boundary
-		if( maxOffset & 0x3 )
-		{
-			maxOffset += 4 - (maxOffset & 0x3);
-			lastAdjustedOffset = maxOffset;
-		}
+		// The count is aligned to 4 bytes
+		maxOffset = alignOffset(maxOffset, 4);
+		lastAdjustedOffset = maxOffset;
 
 		// Don't move the patternNode yet because the caller must make a call to SetRepeatCount too
 		maxOffset += 4;
@@ -3393,19 +3390,13 @@ int asCReader::SListAdjuster::AdjustOffset(int offset)
 				if( repeatCount > 0 )
 					repeatCount--;
 
-				asCDataType nextdt = patternType->engine->GetDataTypeFromTypeId(nextTypeId);
-				asUINT size;
-				if(nextdt.IsObjectHandle() || (nextdt.GetTypeInfo() && (nextdt.GetTypeInfo()->flags & asOBJ_REF)) )
-					size = AS_PTR_SIZE*4;
-				else
-					size = nextdt.GetSizeInMemoryBytes();
+				// A type id of 0 means a null handle
+				asCDataType nextdt = nextTypeId ? patternType->engine->GetDataTypeFromTypeId(nextTypeId) : asCDataType::CreateNullHandle();
+				asUINT size = nextdt.GetSizeInListBuffer();
 
-				// Align the offset to 4 bytes boundary
-				if( size >= 4 && (maxOffset & 0x3) )
-				{
-					maxOffset += 4 - (maxOffset & 0x3);
-					lastAdjustedOffset = maxOffset;
-				}
+				// The value is aligned to its natural alignment
+				maxOffset = alignOffset(maxOffset, nextdt.GetAlignment());
+				lastAdjustedOffset = maxOffset;
 
 				// Only move the patternNode if we're not expecting any more repeated entries
 				if( repeatCount == 0 )
@@ -3419,12 +3410,9 @@ int asCReader::SListAdjuster::AdjustOffset(int offset)
 			}
 			else
 			{
-				// Align the offset to 4 bytes boundary
-				if( maxOffset & 0x3 )
-				{
-					maxOffset += 4 - (maxOffset & 0x3);
-					lastAdjustedOffset = maxOffset;
-				}
+				// The type id is aligned to 4 bytes
+				maxOffset = alignOffset(maxOffset, 4);
+				lastAdjustedOffset = maxOffset;
 
 				// The first adjustment is for the typeId
 				maxOffset += 4;
@@ -3434,12 +3422,9 @@ int asCReader::SListAdjuster::AdjustOffset(int offset)
 		}
 		else
 		{
-			// Determine the size of the element
-			asUINT size;
-			if( dt.IsObjectHandle() || (dt.GetTypeInfo() && (dt.GetTypeInfo()->flags & asOBJ_REF)) )
-				size = AS_PTR_SIZE*4;
-			else
-				size = dt.GetSizeInMemoryBytes();
+			// Determine the size and alignment of the element
+			asUINT size = dt.GetSizeInListBuffer();
+			asUINT alignment = dt.GetAlignment();
 
 			// If values are skipped, the offset needs to be incremented
 			while( nextOffset <= offset )
@@ -3447,9 +3432,8 @@ int asCReader::SListAdjuster::AdjustOffset(int offset)
 				if( repeatCount > 0 )
 					repeatCount--;
 
-				// Align the offset to 4 bytes boundary
-				if( size >= 4 && (maxOffset & 0x3) )
-					maxOffset += 4 - (maxOffset & 0x3);
+				// The value is aligned to its natural alignment
+				maxOffset = alignOffset(maxOffset, alignment);
 
 				lastAdjustedOffset = maxOffset;
 				nextOffset += 1;
@@ -3524,6 +3508,19 @@ void asCReader::SListAdjuster::AdjustAllocMem()
 void asCReader::SListAdjuster::SetNextType(int typeId)
 {
 	asASSERT( nextTypeId == -1 );
+
+	if( typeId == 0 )
+	{
+		// A null handle is not written to the buffer, as the buffer is already cleared, so there
+		// will be no adjustment for the value. Reserve the space for it and move to the next element
+		maxOffset = alignOffset(maxOffset, sizeof(void*)) + AS_PTR_SIZE*4;
+
+		if( repeatCount > 0 )
+			repeatCount--;
+		if( repeatCount == 0 )
+			patternNode = patternNode->next;
+		return;
+	}
 
 	nextTypeId = typeId;
 }
@@ -5777,11 +5774,8 @@ int asCWriter::SListAdjuster::AdjustOffset(int offset, asCObjectType *listPatter
 			if( repeatCount > 0 )
 			{
 				// Was any value skipped?
-				asUINT size;
-				if( dt.IsObjectHandle() || (dt.GetTypeInfo() && (dt.GetTypeInfo()->flags & asOBJ_REF)) )
-					size = AS_PTR_SIZE*4;
-				else
-					size = dt.GetSizeInMemoryBytes();
+				asUINT size = dt.GetSizeInListBuffer();
+				asUINT alignment = dt.GetAlignment();
 
 				int count = 0;
 				while( nextOffset <= offset )
@@ -5789,9 +5783,8 @@ int asCWriter::SListAdjuster::AdjustOffset(int offset, asCObjectType *listPatter
 					count++;
 					nextOffset += size;
 
-					// Align the offset on 4 byte boundaries
-					if( size >= 4 && (nextOffset & 0x3) )
-						nextOffset += 4 - (nextOffset & 0x3);
+					// The values are aligned to their natural alignment
+					nextOffset = alignOffset(nextOffset, alignment);
 				}
 
 				if( --count > 0 )
@@ -5862,6 +5855,17 @@ void asCWriter::SListAdjuster::SetNextType(int typeId)
 	// Make sure the list is expecting a type at this location
 	asASSERT( patternNode->type == asLPT_TYPE &&
 	          reinterpret_cast<asSListPatternDataTypeNode*>(patternNode)->dataType.GetTokenType() == ttQuestion );
+
+	if( typeId == 0 )
+	{
+		// A null handle is not written to the buffer, as the buffer is already cleared,
+		// so there will be no adjustment for the value. Move to the next element
+		if( repeatCount > 0 )
+			repeatCount--;
+		if( repeatCount == 0 )
+			patternNode = patternNode->next;
+		return;
+	}
 
 	// Inform the type id for the next adjustment
 	nextTypeId = typeId;
