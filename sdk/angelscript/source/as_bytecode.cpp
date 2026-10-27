@@ -2007,7 +2007,8 @@ void asCByteCode::Output(asDWORD *array)
 			case asBCTYPE_wW_QW_ARG:
 			case asBCTYPE_rW_QW_ARG:
 				*(((asWORD*)ap)+1) = instr->wArg[0];
-				*(asQWORD*)(ap+1) = *(asQWORD*)&instr->arg;
+				// The argument is only aligned to 4 bytes in the bytecode
+				memcpy(ap+1, &instr->arg, sizeof(asQWORD));
 				break;
 			case asBCTYPE_W_ARG:
 			case asBCTYPE_rW_ARG:

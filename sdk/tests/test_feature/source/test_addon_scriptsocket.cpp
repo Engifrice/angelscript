@@ -4,6 +4,7 @@
 #include "../../../add_on/scriptdictionary/scriptdictionary.h"
 #include "../../../add_on/contextmgr/contextmgr.h"
 #include "../../../add_on/autowrapper/aswrappedcall.h"
+#include <chrono>
 
 namespace Test_Addon_ScriptSocket
 {
@@ -132,12 +133,17 @@ bool Test()
 
 		// Run the script
 		ctxMgr.AddContext(engine, mod->GetFunctionByName("main"));
-		int count = 10;
-		while (ctxMgr.ExecuteScripts() > 0 && count-- > 0);
+		// The number of iterations needed depends on the timing of the socket, which varies with the
+		// speed of the build and the machine, so the scripts are given a time limit rather than a
+		// fixed number of iterations. The scripts must still need several iterations, as they yield
+		int iterations = 0;
+		std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+		while (ctxMgr.ExecuteScripts() > 0 && std::chrono::steady_clock::now() - start < std::chrono::seconds(10))
+			iterations++;
 
-		if (count > 4) // The count may vary based on the race conditions with the socket
+		if (iterations < 6)
 		{
-			PRINTF("count = %d\n", count); 
+			PRINTF("iterations = %d\n", iterations);
 			TEST_FAILED;
 		}
 

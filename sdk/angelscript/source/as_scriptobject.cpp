@@ -392,17 +392,15 @@ asCScriptObject::asCScriptObject(asCObjectType *ot, bool doInitialize)
 
 void asCScriptObject::Destruct()
 {
+	// Get the engine before the destructor releases the object type
+	asCScriptEngine *engine = objType->engine;
+
 	// Call the destructor, which will also call the GCObject's destructor
 	this->~asCScriptObject();
 
-	// Free the memory
-#ifndef WIP_16BYTE_ALIGN
-	userFree(this);
-#else
-	// Script object memory is allocated through asCScriptEngine::CallAlloc()
-	// This free call must match the allocator used in CallAlloc().
-	userFreeAligned(this);
-#endif
+	// Free the memory. Script object memory is allocated through asCScriptEngine::CallAlloc()
+	// so this free call must match the allocator used there
+	engine->CallFree(this);
 }
 
 asCScriptObject::~asCScriptObject()

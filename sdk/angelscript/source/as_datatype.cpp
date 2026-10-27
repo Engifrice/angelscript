@@ -721,18 +721,65 @@ int asCDataType::GetSizeOnStackDWords() const
 	return GetSizeInMemoryDWords() + size;
 }
 
-#ifdef WIP_16BYTE_ALIGN
-int  asCDataType::GetAlignment() const
+// Every value pushed on the stack takes up a multiple of 8 bytes, which keeps the
+// stack pointer and all arguments aligned to 8 bytes. For the variable type the
+// pointer and the type id each take up their own 8 bytes
+int asCDataType::GetSizeOfArgSlotDWords() const
 {
-	if( typeInfo == NULL )
-	{
-		// TODO: Small primitives should not be aligned to 4 byte boundaries
-		return 4; //Default alignment
-	}
+	if( tokenType == ttQuestion )
+		return AS_PTR_SIZE + AS_ARG_SLOT_DWORDS;
 
-	return typeInfo->alignment;
+	return alignOffset(GetSizeOnStackDWords(), AS_ARG_SLOT_DWORDS);
 }
-#endif
+
+// The size in dwords that a local variable of this type takes up on the stack.
+// Value types are stored inline on the stack, unless they are allocated on the heap
+int asCDataType::GetSizeOfLocalDWords(bool onHeap) const
+{
+	if( !onHeap && IsObject() )
+		return GetSizeInMemoryDWords();
+
+	return GetSizeOnStackDWords();
+}
+
+// The alignment in dwords of a local variable of this type on the stack.
+// Variables smaller than a dword still take up a full dword
+int asCDataType::GetAlignmentOfLocalDWords(bool onHeap) const
+{
+	int alignment;
+	if( onHeap && (IsObject() || IsFuncdef()) )
+		alignment = sizeof(void*); // The variable holds a pointer to the object
+	else
+		alignment = GetAlignment();
+
+	return alignment <= 4 ? 1 : alignment / 4;
+}
+
+int asCDataType::GetAlignment() const
+{
+	// Handles and references are stored as pointers. The same goes for reference types,
+	// as the engine always stores those as pointers, e.g. in members and list buffers
+	if( isObjectHandle || isReference || tokenType == ttQuestion || (typeInfo && (typeInfo->flags & asOBJ_REF)) )
+		return sizeof(void*);
+
+	if( typeInfo != 0 )
+		return typeInfo->alignment;
+
+	// Primitives are aligned to their size
+	int size = GetSizeInMemoryBytes();
+	return size > 0 ? size : 1;
+}
+
+// Primitives and value types are stored inline in the list buffer, while
+// handles and reference types are stored as pointers. Each value is placed
+// at an offset that is a multiple of GetAlignment()
+int asCDataType::GetSizeInListBuffer() const
+{
+	if( IsPrimitive() || (!IsObjectHandle() && typeInfo && (typeInfo->flags & asOBJ_VALUE)) )
+		return GetSizeInMemoryBytes();
+
+	return AS_PTR_SIZE*4;
+}
 
 asSTypeBehaviour *asCDataType::GetBehaviour() const
 {

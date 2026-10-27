@@ -1989,7 +1989,7 @@ bool Test()
 				return 0;
 			}
 			virtual void ReleaseJITFunction(asJITFunction func) {
-				delete reinterpret_cast<int*>(func);
+				delete[] reinterpret_cast<int*>(func);
 			}
 			int invokeCount;
 		} jit;
@@ -2042,7 +2042,7 @@ bool Test()
 				invokeCount++;
 			}
 			virtual void CleanFunction(asIScriptFunction * /*scriptFunc*/, asJITFunction func) {
-				delete reinterpret_cast<int*>(func);
+				delete[] reinterpret_cast<int*>(func);
 				releaseCount++;
 			}
 			void Compile(asIScriptEngine* engine)
@@ -2111,7 +2111,7 @@ bool Test()
 				return 0;
 			}
 			virtual void ReleaseJITFunction(asJITFunction func) { 
-				delete reinterpret_cast<int*>(func); 
+				delete[] reinterpret_cast<int*>(func); 
 			}
 			int invokeCount;
 		} jit;

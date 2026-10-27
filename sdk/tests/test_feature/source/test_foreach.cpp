@@ -1,4 +1,5 @@
 #include "utils.h"
+#include "../../../add_on/autowrapper/aswrappedcall.h"
 
 namespace TestForEach
 {
@@ -178,6 +179,30 @@ static void TestBreakValueRelease(TestBreakValue* self)
 		delete self;
 }
 
+// The iterator is taken by value in the script declaration but by reference in C++,
+// so these can't be wrapped automatically with the autowrapper
+static void TestBreakIteratorOpForEnd_Generic(asIScriptGeneric* gen)
+{
+	const Query* q = (const Query*)gen->GetObject();
+	const TestBreakIterator* it = (const TestBreakIterator*)gen->GetArgObject(0);
+	gen->SetReturnByte(TestBreakIteratorOpForEnd(*q, *it));
+}
+
+static void TestBreakIteratorOpForNext_Generic(asIScriptGeneric* gen)
+{
+	const Query* q = (const Query*)gen->GetObject();
+	TestBreakIterator* it = (TestBreakIterator*)gen->GetArgObject(0);
+	new(gen->GetAddressOfReturnLocation()) TestBreakIterator(TestBreakIteratorOpForNext(*q, *it));
+}
+
+static void TestBreakIteratorOpForValue_Generic(asIScriptGeneric* gen)
+{
+	const Query* q = (const Query*)gen->GetObject();
+	const ScriptQueryIterator* it = (const ScriptQueryIterator*)gen->GetArgObject(0);
+	// The handle is returned as @+, so the engine increments the refcount
+	*(TestBreakValue**)gen->GetAddressOfReturnLocation() = TestBreakIteratorOpForValue(*q, *it);
+}
+
 bool Test()
 {
 	bool fail = false;
@@ -192,19 +217,19 @@ bool Test()
 		bout.buffer = "";
 
 		engine->RegisterObjectType("TestBreakIterator", sizeof(TestBreakIterator), asOBJ_VALUE | asGetTypeTraits<TestBreakIterator>());
-		engine->RegisterObjectBehaviour("TestBreakIterator", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(ConstructTestBreakIterator), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectBehaviour("TestBreakIterator", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(DestroyTestBreakIterator), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectMethod("TestBreakIterator", "TestBreakIterator& opAssign(const TestBreakIterator&in)", asMETHOD(TestBreakIterator, operator=), asCALL_THISCALL);
+		engine->RegisterObjectBehaviour("TestBreakIterator", asBEHAVE_CONSTRUCT, "void f()", WRAP_OBJ_FIRST(ConstructTestBreakIterator), asCALL_GENERIC);
+		engine->RegisterObjectBehaviour("TestBreakIterator", asBEHAVE_DESTRUCT, "void f()", WRAP_OBJ_FIRST(DestroyTestBreakIterator), asCALL_GENERIC);
+		engine->RegisterObjectMethod("TestBreakIterator", "TestBreakIterator& opAssign(const TestBreakIterator&in)", WRAP_MFN(TestBreakIterator, operator=), asCALL_GENERIC);
 
 		engine->RegisterObjectType("TestBreakValue", 0, asOBJ_REF);
-		engine->RegisterObjectBehaviour("TestBreakValue", asBEHAVE_ADDREF, "void f()", asFUNCTION(TestBreakValueAddRef), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectBehaviour("TestBreakValue", asBEHAVE_RELEASE, "void f()", asFUNCTION(TestBreakValueRelease), asCALL_CDECL_OBJFIRST);
+		engine->RegisterObjectBehaviour("TestBreakValue", asBEHAVE_ADDREF, "void f()", WRAP_OBJ_FIRST(TestBreakValueAddRef), asCALL_GENERIC);
+		engine->RegisterObjectBehaviour("TestBreakValue", asBEHAVE_RELEASE, "void f()", WRAP_OBJ_FIRST(TestBreakValueRelease), asCALL_GENERIC);
 
 		engine->RegisterObjectType("Query", 0, asOBJ_REF | asOBJ_NOCOUNT);
-		engine->RegisterObjectMethod("Query", "TestBreakIterator opForBegin() const", asFUNCTION(TestBreakIteratorOpForBegin), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectMethod("Query", "bool opForEnd(TestBreakIterator it) const", asFUNCTION(TestBreakIteratorOpForEnd), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectMethod("Query", "TestBreakIterator opForNext(TestBreakIterator it) const", asFUNCTION(TestBreakIteratorOpForNext), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectMethod("Query", "TestBreakValue@+ opForValue(TestBreakIterator it) const", asFUNCTION(TestBreakIteratorOpForValue), asCALL_CDECL_OBJFIRST);
+		engine->RegisterObjectMethod("Query", "TestBreakIterator opForBegin() const", WRAP_OBJ_FIRST(TestBreakIteratorOpForBegin), asCALL_GENERIC);
+		engine->RegisterObjectMethod("Query", "bool opForEnd(TestBreakIterator it) const", asFUNCTION(TestBreakIteratorOpForEnd_Generic), asCALL_GENERIC);
+		engine->RegisterObjectMethod("Query", "TestBreakIterator opForNext(TestBreakIterator it) const", asFUNCTION(TestBreakIteratorOpForNext_Generic), asCALL_GENERIC);
+		engine->RegisterObjectMethod("Query", "TestBreakValue@+ opForValue(TestBreakIterator it) const", asFUNCTION(TestBreakIteratorOpForValue_Generic), asCALL_GENERIC);
 
 		Query q;
 		engine->RegisterGlobalProperty("Query q", &q);
@@ -301,15 +326,15 @@ bool Test()
 		bout.buffer = "";
 
 		engine->RegisterObjectType("QueryIterator", sizeof(ScriptQueryIterator), asOBJ_VALUE | asGetTypeTraits<ScriptQueryIterator>());
-		engine->RegisterObjectBehaviour("QueryIterator", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(ConstructScriptQueryIterator), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectBehaviour("QueryIterator", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(DestroyScriptQueryIterator), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectMethod("QueryIterator", "QueryIterator& opAssign(const QueryIterator&in)", asMETHOD(ScriptQueryIterator, operator=), asCALL_THISCALL);
+		engine->RegisterObjectBehaviour("QueryIterator", asBEHAVE_CONSTRUCT, "void f()", WRAP_OBJ_FIRST(ConstructScriptQueryIterator), asCALL_GENERIC);
+		engine->RegisterObjectBehaviour("QueryIterator", asBEHAVE_DESTRUCT, "void f()", WRAP_OBJ_FIRST(DestroyScriptQueryIterator), asCALL_GENERIC);
+		engine->RegisterObjectMethod("QueryIterator", "QueryIterator& opAssign(const QueryIterator&in)", WRAP_MFN(ScriptQueryIterator, operator=), asCALL_GENERIC);
 
 		engine->RegisterObjectType("Query", 0, asOBJ_REF | asOBJ_NOCOUNT);
-		engine->RegisterObjectMethod("Query", "QueryIterator opForBegin() const", asFUNCTION(ScriptQueryOpForBegin), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectMethod("Query", "bool opForEnd(QueryIterator it) const", asFUNCTION(ScriptQueryOpForEnd), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectMethod("Query", "QueryIterator opForNext(QueryIterator it) const", asFUNCTION(ScriptQueryOpForNext), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectMethod("Query", "int opForValue(QueryIterator it) const", asFUNCTION(ScriptQueryOpForValue), asCALL_CDECL_OBJFIRST);
+		engine->RegisterObjectMethod("Query", "QueryIterator opForBegin() const", WRAP_OBJ_FIRST(ScriptQueryOpForBegin), asCALL_GENERIC);
+		engine->RegisterObjectMethod("Query", "bool opForEnd(QueryIterator it) const", WRAP_OBJ_FIRST(ScriptQueryOpForEnd), asCALL_GENERIC);
+		engine->RegisterObjectMethod("Query", "QueryIterator opForNext(QueryIterator it) const", WRAP_OBJ_FIRST(ScriptQueryOpForNext), asCALL_GENERIC);
+		engine->RegisterObjectMethod("Query", "int opForValue(QueryIterator it) const", WRAP_OBJ_FIRST(ScriptQueryOpForValue), asCALL_GENERIC);
 
 		Query q;
 		engine->RegisterGlobalProperty("Query q", &q);
@@ -1049,10 +1074,10 @@ bool Test()
 		g_printBuffer = "";
 
 		engine->RegisterObjectType("ValueContainer", sizeof(ValueContainer), asOBJ_VALUE | asOBJ_POD | asGetTypeTraits<ValueContainer>());
-		engine->RegisterObjectMethod("ValueContainer", "uint opForBegin()", asFUNCTIONPR(ValueContainerOpForBegin, (ValueContainer&), asUINT), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectMethod("ValueContainer", "bool opForEnd(uint it)", asFUNCTIONPR(ValueContainerOpForEnd, (ValueContainer&, asUINT), bool), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectMethod("ValueContainer", "uint opForNext(uint it)", asFUNCTIONPR(ValueContainerOpForNext, (ValueContainer&, asUINT), asUINT), asCALL_CDECL_OBJFIRST);
-		engine->RegisterObjectMethod("ValueContainer", "uint opForValue(uint it)", asFUNCTIONPR(ValueContainerOpForValue, (ValueContainer&, asUINT), asUINT), asCALL_CDECL_OBJFIRST);
+		engine->RegisterObjectMethod("ValueContainer", "uint opForBegin()", WRAP_OBJ_FIRST_PR(ValueContainerOpForBegin, (ValueContainer&), asUINT), asCALL_GENERIC);
+		engine->RegisterObjectMethod("ValueContainer", "bool opForEnd(uint it)", WRAP_OBJ_FIRST_PR(ValueContainerOpForEnd, (ValueContainer&, asUINT), bool), asCALL_GENERIC);
+		engine->RegisterObjectMethod("ValueContainer", "uint opForNext(uint it)", WRAP_OBJ_FIRST_PR(ValueContainerOpForNext, (ValueContainer&, asUINT), asUINT), asCALL_GENERIC);
+		engine->RegisterObjectMethod("ValueContainer", "uint opForValue(uint it)", WRAP_OBJ_FIRST_PR(ValueContainerOpForValue, (ValueContainer&, asUINT), asUINT), asCALL_GENERIC);
 
 		asIScriptModule* mod = engine->GetModule(0, asGM_ALWAYS_CREATE);
 		mod->AddScriptSection("script",

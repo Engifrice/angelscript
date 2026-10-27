@@ -155,14 +155,34 @@ engine->RgisterObjectBehaviour("grid", asBEHAVE_LIST_FACTORY,
 
 The list buffer passed to the factory function will be populated using the following rules:
 
-- Whenever the pattern expects a repeat, the buffer will contain a 32bit integer with the 
+- Whenever the pattern expects a repeat, the buffer will contain a 32bit integer with the
   number of repeated values that will come afterwards
-- Whenever the pattern expects a ?, then the buffer will contain a 32bit integer representing 
-  the typeId of the value that comes after.
-- Whenever the pattern expects a reference type, the buffer will contain a pointer to the object
+- Whenever the pattern expects a ?, then the buffer will contain a 32bit integer representing
+  the typeId of the value that comes after. A typeId of 0 means a null handle.
+- Whenever the pattern expects a reference type or a handle, the buffer will contain a pointer to the object
 - Whenever the pattern expects a value type, the buffer will contain the object itself
-- All values in the buffer will be aligned to a 32bit boundary, unless the size of the value placed
-  in the buffer is smaller than 32bits.
+- The 32bit integers for the repeat counts and typeIds are aligned to 4 bytes.
+- All other values are aligned to their natural alignment, i.e. primitives to their size, pointers to the
+  size of a pointer, and value types to the alignment they were \ref asIScriptEngine::RegisterObjectType "registered" with.
+  The alignment for any type id can be obtained with \ref asIScriptEngine::GetAlignmentOfType "GetAlignmentOfType".
+- The buffer itself is aligned to 16 bytes, so the alignment can be computed from the address in the buffer.
+
+This means there may be padding between the values, e.g. between the 32bit repeat count and the first
+value of a list of doubles. The following shows how a list factory finds the values that follow a repeat count:
+
+\code
+CMyArray *ListFactory(asITypeInfo *ti, void *listBuffer)
+{
+  asUINT length = *(asUINT*)listBuffer;
+
+  // The values follow the count, aligned to the alignment of the element type
+  asUINT alignment = ti->GetEngine()->GetAlignmentOfType(ti->GetSubTypeId());
+  asBYTE *values = (asBYTE*)listBuffer + 4;
+  values += (alignment - (asPWORD(values) & (alignment - 1))) & (alignment - 1);
+
+  ...
+}
+\endcode
 
 The compiler will prepare the buffer with temporary values that can be moved into the
 storage space of the object. Reference types will be stored as pointers, while value types will be 
@@ -291,6 +311,24 @@ r = engine->RegisterObjectType("pod", sizeof(pod), asOBJ_VALUE | asOBJ_POD); ass
 r = engine->RegisterObjectType("val", sizeof(val), asOBJ_VALUE); assert( r >= 0 );
 \endcode
 
+\section doc_reg_val_align Alignment
+
+The engine guarantees that every instance of a value type that it creates is aligned to the alignment of the type,
+whether it is a local variable, a member of a script class, a global variable, a copy passed by value, a return value,
+or an element in an initialization list. When the alignment isn't informed, it is derived from the size as the largest
+power of two that divides the size, but never more than 8 bytes. Types that require a larger alignment, e.g. types
+holding SIMD data, must inform the alignment explicitly when they are registered. The largest alignment supported is 16 bytes.
+
+\code
+struct alignas(16) vec4 { float x, y, z, w; };
+
+// Register a type that requires 16 byte alignment
+r = engine->RegisterObjectType("vec4", sizeof(vec4), alignof(vec4), asOBJ_VALUE | asOBJ_POD); assert( r >= 0 );
+\endcode
+
+The size must be a multiple of the alignment, which is always the case for C++ types. Primitives are always aligned
+to their size, and handles to the size of a pointer.
+
 \see The \ref doc_addon_std_string or the \ref doc_addon_math "complex type in the math add-on" for examples of value types
 \see \ref doc_adv_generic_handle for a more specific example of a value type
 \see \ref doc_gc_object for when the type may form circular references when being a member of another type
@@ -354,6 +392,9 @@ engine->RegisterObjectBehaviour("vector3", asBEHAVE_LIST_CONSTRUCT, "void f(int 
 
 
 \section doc_reg_val_2 Value types and native calling conventions
+
+\note This version of the library only supports the \ref doc_generic "generic calling convention", so the flags
+described in this section have no effect on how the types are passed to and from the application.
 
 If the type will be passed to or from the application by value using native calling conventions it is important to inform
 AngelScript of its real type in C++, otherwise AngelScript won't be able to determine exactly how C++ is treating the type in

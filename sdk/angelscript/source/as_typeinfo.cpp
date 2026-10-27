@@ -47,6 +47,7 @@ asCTypeInfo::asCTypeInfo()
 	engine = 0;
 	module = 0;
 	size = 0;
+	alignment = 4;
 	flags = 0;
 	typeId = -1; // start as -1 to signal that it hasn't been defined
 
@@ -64,6 +65,7 @@ asCTypeInfo::asCTypeInfo(asCScriptEngine *in_engine)
 	engine = in_engine;
 	module = 0;
 	size = 0;
+	alignment = 4;
 	flags = 0;
 	typeId = -1; // start as -1 to signal that it hasn't been defined
 
@@ -209,6 +211,12 @@ asQWORD asCTypeInfo::GetFlags() const
 asUINT asCTypeInfo::GetSize() const
 {
 	return size;
+}
+
+// interface
+asUINT asCTypeInfo::GetAlignment() const
+{
+	return alignment;
 }
 
 // interface
@@ -434,6 +442,7 @@ asCFuncdefType::asCFuncdefType(asCScriptEngine *en, asCScriptFunction *func) : a
 	// A function pointer is special kind of reference type
 	// It must be possible to garbage collect, as funcdefs can form circular references if used as delegates
 	flags       = asOBJ_REF | asOBJ_GC | asOBJ_FUNCDEF | (func->IsShared() ? asQWORD(asOBJ_SHARED) : 0);
+	alignment   = sizeof(void*); // Function pointers are always stored as handles
 	name        = func->name;
 	nameSpace   = func->nameSpace;
 	module      = func->module;

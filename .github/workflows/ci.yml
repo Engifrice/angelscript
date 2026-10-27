@@ -1,0 +1,191 @@
+name: CI
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel superseded runs of pull requests, but let every push to master finish
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Every supported platform and compiler, in both Debug and Release
+  platforms:
+    name: ${{ matrix.platform.name }} ${{ matrix.build_type }}
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [ Debug, Release ]
+        platform:
+          - { name: Linux x64 GCC,         os: ubuntu-24.04,     cc: gcc,      cxx: g++,      generator: Unix Makefiles, shell: bash }
+          - { name: Linux x64 Clang,       os: ubuntu-24.04,     cc: clang,    cxx: clang++,  generator: Unix Makefiles, shell: bash }
+          - { name: Linux arm64 GCC,       os: ubuntu-24.04-arm, cc: gcc,      cxx: g++,      generator: Unix Makefiles, shell: bash }
+          - { name: Linux arm64 Clang,     os: ubuntu-24.04-arm, cc: clang,    cxx: clang++,  generator: Unix Makefiles, shell: bash }
+          - { name: Windows x64 MSVC,      os: windows-2025,     cc: cl,       cxx: cl,       generator: Ninja, shell: pwsh, msvc: x64 }
+          - { name: Windows x64 Clang-cl,  os: windows-2025,     cc: clang-cl, cxx: clang-cl, generator: Ninja, shell: pwsh, msvc: x64 }
+          - { name: Windows x64 Clang,     os: windows-2025,     cc: clang,    cxx: clang++,  generator: Ninja, shell: pwsh, msvc: x64 }
+          - { name: Windows arm64 MSVC,    os: windows-11-arm,   cc: cl,       cxx: cl,       generator: Ninja, shell: pwsh, msvc: arm64 }
+          - { name: Windows x64 MinGW GCC, os: windows-2025,     cc: gcc,      cxx: g++,      generator: Ninja, shell: 'msys2 {0}', msys2: UCRT64 }
+          - { name: macOS arm64 Clang,     os: macos-15,         cc: clang,    cxx: clang++,  generator: Unix Makefiles, shell: bash }
+          - { name: macOS x64 Clang,       os: macos-15-intel,   cc: clang,    cxx: clang++,  generator: Unix Makefiles, shell: bash }
+    defaults:
+      run:
+        shell: ${{ matrix.platform.shell }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSVC
+        if: matrix.platform.msvc
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.platform.msvc }}
+
+      - name: Set up MSYS2
+        if: matrix.platform.msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.platform.msys2 }}
+          pacboy: >-
+            gcc:p
+            cmake:p
+            ninja:p
+
+      - name: Configure
+        run: >
+          cmake -S sdk/tests/test_feature/projects/cmake -B build
+          -G "${{ matrix.platform.generator }}"
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_C_COMPILER=${{ matrix.platform.cc }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.platform.cxx }}
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Test
+        id: test
+        run: ctest --test-dir build --output-on-failure --timeout 1800
+
+      # When the tests fail, run them again in a debugger so a crash shows where it happened
+      - name: Show crash location
+        if: failure() && steps.test.outcome == 'failure' && matrix.platform.msvc
+        shell: pwsh
+        working-directory: sdk/tests/test_feature/bin
+        run: |
+          $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+          $cdb = "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\$arch\cdb.exe"
+          if (-not (Test-Path $cdb)) { Write-Host "The debugger was not found at $cdb"; exit 0 }
+          & $cdb -G -lines -c "g; kn 40; q" .\test_feature.exe
+
+      - name: Show crash location
+        if: failure() && steps.test.outcome == 'failure' && runner.os == 'Linux'
+        working-directory: sdk/tests/test_feature/bin
+        run: gdb -batch -ex run -ex bt ./test_feature
+
+  # Library options, build variants, and sanitizers on a representative selection of platforms
+  configurations:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC AS_DEBUG
+            os: ubuntu-24.04
+            shell: bash
+            cxxflags: -DAS_DEBUG
+            args: -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+
+          - name: Linux Clang AS_USE_NAMESPACE
+            os: ubuntu-24.04
+            shell: bash
+            cxxflags: -DAS_USE_NAMESPACE
+            args: -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+
+          - name: Linux GCC AS_NO_EXCEPTIONS
+            os: ubuntu-24.04
+            shell: bash
+            args: -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DAS_NO_EXCEPTIONS=ON
+
+          - name: Linux GCC shared library
+            os: ubuntu-24.04
+            shell: bash
+            args: -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DBUILD_SHARED_LIBS=ON
+
+          - name: Windows MSVC shared library
+            os: windows-2025
+            shell: pwsh
+            msvc: x64
+            args: -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DBUILD_SHARED_LIBS=ON
+
+          - name: Linux GCC C++20
+            os: ubuntu-24.04
+            shell: bash
+            args: -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_STANDARD=20
+
+          - name: Windows MSVC C++20
+            os: windows-2025
+            shell: pwsh
+            msvc: x64
+            args: -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_CXX_STANDARD=20
+
+          - name: Linux Clang AddressSanitizer and UndefinedBehaviorSanitizer
+            os: ubuntu-24.04
+            shell: bash
+            # The function check is disabled, as the API takes callbacks of any signature through asFUNCTION
+            # and calls them through a generic function pointer type. The ignore list explains the other exclusions
+            # ({0} is replaced by the workspace directory in the Configure step)
+            cxxflags: -fsanitize=address,undefined -fno-sanitize=function -fsanitize-ignorelist={0}/.github/sanitizer-ignorelist.txt -fno-sanitize-recover=undefined -fno-omit-frame-pointer
+            ldflags: -fsanitize=address,undefined
+            args: -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+
+          - name: Windows MSVC AddressSanitizer
+            os: windows-2025
+            shell: pwsh
+            msvc: x64
+            cxxflags: /fsanitize=address
+            args: -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSVC
+        if: matrix.msvc
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc }}
+
+      # The flags are given in the environment, so CMake adds them to its default flags instead of replacing them
+      - name: Configure
+        env:
+          CXXFLAGS: ${{ format(matrix.cxxflags, github.workspace) }}
+          LDFLAGS: ${{ matrix.ldflags }}
+        run: cmake -S sdk/tests/test_feature/projects/cmake -B build ${{ matrix.args }}
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Test
+        id: test
+        run: ctest --test-dir build --output-on-failure --timeout 3600
+
+      # When the tests fail, run them again in a debugger so a crash shows where it happened
+      - name: Show crash location
+        if: failure() && steps.test.outcome == 'failure' && matrix.msvc
+        shell: pwsh
+        working-directory: sdk/tests/test_feature/bin
+        run: |
+          $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+          $cdb = "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\$arch\cdb.exe"
+          if (-not (Test-Path $cdb)) { Write-Host "The debugger was not found at $cdb"; exit 0 }
+          & $cdb -G -lines -c "g; kn 40; q" .\test_feature.exe

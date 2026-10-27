@@ -1,0 +1,7 @@
+# Checks the sanitizers skip in some sources, passed to Clang with -fsanitize-ignorelist
+
+# The tests register polymorphic classes with asOFFSET, which computes the offset by accessing the
+# member through a fake pointer. The vptr check reads the type info at that pointer, which crashes.
+# The check stays enabled for the library and the add-ons
+[vptr]
+src:*/tests/test_feature/*

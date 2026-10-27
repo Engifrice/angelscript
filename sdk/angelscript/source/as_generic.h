@@ -101,6 +101,10 @@ public:
 	void *objectRegister;
 
 	asQWORD returnVal;
+
+	// Set when a value type returned on the stack is constructed through SetReturnObject,
+	// or when the function asks for the return location, which commits it to construct the value there
+	bool returnValueConstructed;
 };
 
 class asCGenericVariadic : public asCGeneric

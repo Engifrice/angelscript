@@ -40,6 +40,7 @@
 #define ANGELSCRIPT_H
 
 #include <stddef.h>
+#include <string.h> // memcpy for asCBytecodeArg
 #ifndef _MSC_VER
 #include <stdint.h>
 #endif
@@ -257,8 +258,7 @@ enum asEObjTypeFlags
 	asOBJ_ENUM                        = (1<<26),
 	asOBJ_TEMPLATE_SUBTYPE            = (1<<27),
 	asOBJ_TYPEDEF                     = (1<<28),
-	asOBJ_ABSTRACT                    = (1<<29),
-	asOBJ_APP_ALIGN16                 = (1<<30)
+	asOBJ_ABSTRACT                    = (1<<29)
 };
 
 // These need to be here since they are too large for enum underlying type (int32 or uint32) on C++98 compliant compilers
@@ -411,6 +411,8 @@ typedef void (*asFUNCTION_t)();
 typedef void (*asGENFUNC_t)(asIScriptGeneric *);
 typedef void *(*asALLOCFUNC_t)(size_t);
 typedef void (*asFREEFUNC_t)(void *);
+typedef void *(*asALLOCALIGNEDFUNC_t)(size_t size, size_t alignment, void *userParam);
+typedef void (*asFREEALIGNEDFUNC_t)(void *ptr, void *userParam);
 typedef void (*asCLEANENGINEFUNC_t)(asIScriptEngine *);
 typedef void (*asCLEANMODULEFUNC_t)(asIScriptModule *);
 typedef void (*asCLEANCONTEXTFUNC_t)(asIScriptContext *);
@@ -673,6 +675,9 @@ public:
 	virtual int Release() const = 0;
 	virtual int ShutDownAndRelease() = 0;
 
+	// Memory for instances of registered value types and script classes
+	virtual int SetObjectMemoryFunctions(asALLOCALIGNEDFUNC_t allocFunc, asFREEALIGNEDFUNC_t freeFunc, void *userParam = 0) = 0;
+
 	// Engine properties
 	virtual int     SetEngineProperty(asEEngineProp property, asPWORD value) = 0;
 	virtual asPWORD GetEngineProperty(asEEngineProp property) const = 0;
@@ -702,6 +707,7 @@ public:
 
 	// Object types
 	virtual int            RegisterObjectType(const char *obj, int byteSize, asQWORD flags) = 0;
+	virtual int            RegisterObjectType(const char *obj, int byteSize, int alignment, asQWORD flags) = 0;
 	virtual int            RegisterObjectProperty(const char *obj, const char *declaration, int byteOffset, int compositeOffset = 0, bool isCompositeIndirect = false) = 0;
 	virtual int            RegisterObjectMethod(const char *obj, const char *declaration, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false) = 0;
 	virtual int            RegisterObjectBehaviour(const char *obj, asEBehaviours behaviour, const char *declaration, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false) = 0;
@@ -760,6 +766,7 @@ public:
 	virtual int            GetTypeIdByDecl(const char *decl) const = 0;
 	virtual const char    *GetTypeDeclaration(int typeId, bool includeNamespace = false) const = 0;
 	virtual int            GetSizeOfPrimitiveType(int typeId) const = 0;
+	virtual int            GetAlignmentOfType(int typeId) const = 0;
 	virtual asITypeInfo   *GetTypeInfoById(int typeId) const = 0;
 	virtual asITypeInfo   *GetTypeInfoByName(const char *name) const = 0;
 	virtual asITypeInfo   *GetTypeInfoByDecl(const char *decl) const = 0;
@@ -769,6 +776,8 @@ public:
 	virtual void                  *CreateScriptObject(const asITypeInfo *type) = 0;
 	virtual void                  *CreateScriptObjectCopy(void *obj, const asITypeInfo *type) = 0;
 	virtual void                  *CreateUninitializedScriptObject(const asITypeInfo *type) = 0;
+	virtual void                  *AllocateObjectMemory(const asITypeInfo *type) = 0;
+	virtual void                   FreeObjectMemory(void *ptr) = 0;
 	virtual asIScriptFunction     *CreateDelegate(asIScriptFunction *func, void *obj) = 0;
 	virtual int                    AssignScriptObject(void *dstObj, void *srcObj, const asITypeInfo *type) = 0;
 	virtual void                   ReleaseScriptObject(void *obj, const asITypeInfo *type) = 0;
@@ -1088,6 +1097,7 @@ public:
 	virtual bool             DerivesFrom(const asITypeInfo *objType) const = 0;
 	virtual asQWORD          GetFlags() const = 0;
 	virtual asUINT           GetSize() const = 0;
+	virtual asUINT           GetAlignment() const = 0;
 	virtual int              GetTypeId() const = 0;
 	virtual int              GetSubTypeId(asUINT subTypeIndex = 0) const = 0;
 	virtual asITypeInfo     *GetSubType(asUINT subTypeIndex = 0) const = 0;
@@ -1769,12 +1779,12 @@ const asSBCInfo asBCInfo[256] =
 {
 	asBCINFO(PopPtr,	NO_ARG,			-AS_PTR_SIZE, 0),
 	asBCINFO(PshGPtr,	PTR_ARG,		AS_PTR_SIZE,  AS_PTR_SIZE*4),
-	asBCINFO(PshC4,		DW_ARG,			1,            4),
-	asBCINFO(PshV4,		rW_ARG,			1,            4),
+	asBCINFO(PshC4,		DW_ARG,			2,            4), // All values pushed on the stack take up 8 bytes
+	asBCINFO(PshV4,		rW_ARG,			2,            4),
 	asBCINFO(PSF,		rW_ARG,			AS_PTR_SIZE,  AS_PTR_SIZE*4),
 	asBCINFO(SwapPtr,	NO_ARG,			0,            AS_PTR_SIZE*4),
 	asBCINFO(NOT,		rW_ARG,			0,            4),
-	asBCINFO(PshG4,		PTR_ARG,		1,            4),
+	asBCINFO(PshG4,		PTR_ARG,		2,            4),
 	asBCINFO(LdGRdR4,	wW_PTR_ARG,		0,            4),
 	asBCINFO(CALL,		DW_ARG,			0xFFFF,       0),
 	asBCINFO(RET,		W_ARG,			0xFFFF,       0),
@@ -1843,7 +1853,7 @@ const asSBCInfo asBCInfo[256] =
 	asBCINFO(PshNull,	NO_ARG,			AS_PTR_SIZE,  AS_PTR_SIZE*4),
 	asBCINFO(ClrVPtr,	wW_ARG,			0,            AS_PTR_SIZE*4),
 	asBCINFO(OBJTYPE,	PTR_ARG,		AS_PTR_SIZE,  AS_PTR_SIZE*4),
-	asBCINFO(TYPEID,	DW_ARG,			1,            4),
+	asBCINFO(TYPEID,	DW_ARG,			2,            4),
 	asBCINFO(SetV4,		wW_DW_ARG,		0,            4),
 	asBCINFO(SetV8,		wW_QW_ARG,		0,            8),
 	asBCINFO(ADDSi,		W_DW_ARG,		0,            4),
@@ -1967,7 +1977,7 @@ const asSBCInfo asBCInfo[256] =
 	asBCINFO(POWdi,		wW_rW_rW_ARG,	0,            8),
 	asBCINFO(POWi64,	wW_rW_rW_ARG,	0,            8),
 	asBCINFO(POWu64,	wW_rW_rW_ARG,	0,            8),
-	asBCINFO(Thiscall1, DW_ARG,			-AS_PTR_SIZE-1, 0),
+	asBCINFO(Thiscall1, DW_ARG,			-AS_PTR_SIZE-2, 0),
 
 	asBCINFO_DUMMY(201),
 	asBCINFO_DUMMY(202),
@@ -2027,12 +2037,33 @@ const asSBCInfo asBCInfo[256] =
 	asBCINFO(LABEL,			INFO,			0, 0)
 };
 
+// The bytecode is a sequence of dwords, so arguments of 8 bytes are only aligned to 4 bytes.
+// Accessing them through a pointer to the 8 byte type would be undefined behaviour, so they are
+// accessed with memcpy instead, which compilers turn into a single load or store on platforms
+// that allow unaligned access. The object can be used both to read and to write the argument,
+// and it converts to any pointer type when the argument holds a pointer.
+template <typename T>
+class asCBytecodeArg
+{
+public:
+	explicit asCBytecodeArg(void *location) : ptr(location) {}
+
+	operator T() const { T value; memcpy(&value, ptr, sizeof(T)); return value; }
+	template <typename P> operator P*() const { return reinterpret_cast<P*>(asPWORD(T(*this))); }
+
+	asCBytecodeArg &operator=(T value) { memcpy(ptr, &value, sizeof(T)); return *this; }
+	asCBytecodeArg &operator=(const asCBytecodeArg &other) { return *this = T(other); }
+
+private:
+	void *ptr;
+};
+
 // Macros to access bytecode instruction arguments
 #define asBC_DWORDARG(x)  (*(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
 #define asBC_INTARG(x)    (*(int*)(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
-#define asBC_QWORDARG(x)  (*(AS_NAMESPACE_QUALIFIER asQWORD*)(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
+#define asBC_QWORDARG(x)  (AS_NAMESPACE_QUALIFIER asCBytecodeArg<AS_NAMESPACE_QUALIFIER asQWORD>(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
 #define asBC_FLOATARG(x)  (*(float*)(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
-#define asBC_PTRARG(x)    (*(AS_NAMESPACE_QUALIFIER asPWORD*)(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
+#define asBC_PTRARG(x)    (AS_NAMESPACE_QUALIFIER asCBytecodeArg<AS_NAMESPACE_QUALIFIER asPWORD>(((AS_NAMESPACE_QUALIFIER asDWORD*)x)+1))
 #define asBC_WORDARG0(x)  (*(((AS_NAMESPACE_QUALIFIER asWORD*)x)+1))
 #define asBC_WORDARG1(x)  (*(((AS_NAMESPACE_QUALIFIER asWORD*)x)+2))
 #define asBC_SWORDARG0(x) (*(((short*)x)+1))

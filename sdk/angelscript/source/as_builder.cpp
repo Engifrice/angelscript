@@ -2545,6 +2545,7 @@ int asCBuilder::RegisterClass(asCScriptNode *node, asCScriptCode *file, asSNameS
 			st->flags |= asOBJ_IMPLICIT_HANDLE;
 
 		st->size = sizeof(asCScriptObject);
+		st->alignment = alignof(asCScriptObject);
 		st->name = name;
 		st->nameSpace = ns;
 		st->module = module;
@@ -4786,6 +4787,7 @@ int asCBuilder::RegisterEnum(asCScriptNode *node, asCScriptCode *file, asSNameSp
 			if( isShared )
 				st->flags |= asOBJ_SHARED;
 			st->size      = type.GetSizeInMemoryBytes();
+			st->alignment = type.GetAlignment();
 			st->name      = name;
 			st->nameSpace = ns;
 			st->module    = module;
@@ -4952,6 +4954,7 @@ int asCBuilder::RegisterTypedef(asCScriptNode *node, asCScriptCode *file, asSNam
 	{
 		st->flags           = asOBJ_TYPEDEF;
 		st->size            = dataType.GetSizeInMemoryBytes();
+		st->alignment       = dataType.GetAlignment();
 		st->name            = name;
 		st->nameSpace       = ns;
 		st->aliasForType    = dataType;

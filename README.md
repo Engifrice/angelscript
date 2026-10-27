@@ -5,3 +5,11 @@ The AngelCode Scripting Library, or AngelScript as it is also known, is an extre
 The official repository for AngelScript is: https://github.com/anjo76/angelscript
 
 Please go to https://www.angelcode.com/angelscript for more information.
+
+## Engifrice fork:
+This fork exist to satisfy specific needs of `engifrice`.
+
+AngelScript has had for a while a work-in-progress feature to support extended alignment (16-bytes).
+This fork implements it completely, but drops native calling conventions for the sake of complexity.
+
+More tests and a more complex CI were also added. Using `UBSan`, many smaller bugs such as unaligned loads were also patched.

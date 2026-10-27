@@ -1,4 +1,5 @@
 #include "utils.h"
+#include "../../../add_on/autowrapper/aswrappedcall.h"
 
 namespace TestContext
 {
@@ -342,8 +343,9 @@ public:
 									// If stored on the heap the memory needs to be allocated
 									var = ctx->GetAddressOfVar(v, n, true, true);
 
-									// Allocate memory for the string on the heap and set the variable to refer to it
-									*reinterpret_cast<std::string**>(var) = reinterpret_cast<std::string*>(asAllocMem(sizeof(std::string)));
+									// Allocate memory for the string on the heap and set the variable to refer to it.
+									// The memory must come from the engine, as it will free it with the object memory functions
+									*reinterpret_cast<std::string**>(var) = reinterpret_cast<std::string*>(ctx->GetEngine()->AllocateObjectMemory(ctx->GetEngine()->GetTypeInfoById(typeId)));
 
 									var = *reinterpret_cast<void**>(var);
 								}
@@ -562,23 +564,29 @@ private:
 	float TEST[1024 * 4];
 };
 
-template< typename T > static void ConstructorFunc(void* memory)
+template< typename T > static void ConstructorFunc(asIScriptGeneric* gen)
 {
 	// Initialize the pre-allocated memory by calling the
 	// object constructor with the placement-new operator
-	new(memory) T();
+	new(gen->GetObject()) T();
 }
-template< typename T > static void DestructorFunc(void* memory)
+template< typename T > static void DestructorFunc(asIScriptGeneric* gen)
 {
 	// Uninitialize the memory by calling the object destructor
-	((T*)memory)->~T();
+	((T*)gen->GetObject())->~T();
+}
+template< typename T > static void OpAssignFunc(asIScriptGeneric* gen)
+{
+	T* self = (T*)gen->GetObject();
+	*self = *(const T*)gen->GetArgObject(0);
+	gen->SetReturnAddress(self);
 }
 
 template< typename T > bool RegisterClassConstructAndDestruct(asIScriptEngine* pEngine, const char* pClassName)
 {
-	auto r = pEngine->RegisterObjectBehaviour(pClassName, asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(ConstructorFunc<T>), asCALL_CDECL_OBJLAST);
+	auto r = pEngine->RegisterObjectBehaviour(pClassName, asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(ConstructorFunc<T>), asCALL_GENERIC);
 	assert(r >= 0);
-	r = pEngine->RegisterObjectBehaviour(pClassName, asBEHAVE_DESTRUCT, "void f()", asFUNCTION(DestructorFunc<T>), asCALL_CDECL_OBJLAST);
+	r = pEngine->RegisterObjectBehaviour(pClassName, asBEHAVE_DESTRUCT, "void f()", asFUNCTION(DestructorFunc<T>), asCALL_GENERIC);
 	assert(r >= 0);
 
 	return true;
@@ -590,7 +598,7 @@ template< typename T > bool RegisterClassOpAssign(asIScriptEngine* pEngine, cons
 	opFunc += "& opAssign(const ";
 	opFunc += pClassName;
 	opFunc += " &in )";
-	auto r = pEngine->RegisterObjectMethod(pClassName, opFunc.c_str(), asMETHODPR(T, operator =, (const T&), T&), asCALL_THISCALL); assert(r >= 0);
+	auto r = pEngine->RegisterObjectMethod(pClassName, opFunc.c_str(), asFUNCTION(OpAssignFunc<T>), asCALL_GENERIC); assert(r >= 0);
 
 	return true;
 }
@@ -613,7 +621,7 @@ bool Test()
 		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
 		bout.buffer = "";
 
-		int func1 = engine->RegisterGlobalFunction("double test1()", asFUNCTION(ReturnDouble), asCALL_CDECL);
+		int func1 = engine->RegisterGlobalFunction("double test1()", WRAP_FN(ReturnDouble), asCALL_GENERIC);
 
 		asIScriptContext *ctx = engine->CreateContext();
 
@@ -627,7 +635,7 @@ bool Test()
 			TEST_FAILED;
 
 		// Function is registered after the context was created
-		int func2 = engine->RegisterGlobalFunction("double test2()", asFUNCTION(ReturnDouble), asCALL_CDECL);
+		int func2 = engine->RegisterGlobalFunction("double test2()", WRAP_FN(ReturnDouble), asCALL_GENERIC);
 
 		ctx->Prepare(engine->GetFunctionById(func2));
 		r = ctx->Execute();
@@ -651,7 +659,6 @@ bool Test()
 
 	// Test reuse of context after the stack has grown
 	// Reported by Doi Hiroshi
-	SKIP_ON_MAX_PORT
 	{
 		auto engine = asCreateScriptEngine();
 

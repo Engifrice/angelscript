@@ -4,8 +4,10 @@ using std::string;
 #include "../../../add_on/scripthelper/scripthelper.h"
 #include <vector>
 
-// Implemented in as_string_util.cpp
+// Implemented in as_string_util.cpp, inside the library's namespace if AS_USE_NAMESPACE is defined
+BEGIN_AS_NAMESPACE
 extern int asCompareStrings(const char *str1, size_t len1, const char *str2, size_t len2);
+END_AS_NAMESPACE
 
 namespace TestScriptString
 {
@@ -103,7 +105,8 @@ bool Test()
 
 	// Test asCompareStrings
 	// https://github.com/anjo76/angelscript/issues/50
-	#if !defined(__clang__) // the clang project is not making the asCompareString visible, so let's just skip it
+	// The clang project is not making the asCompareString visible, and the shared library only exports the public interface, so let's just skip it
+	#if !defined(__clang__) && !defined(ANGELSCRIPT_DLL_LIBRARY_IMPORT)
 	{
 		int r1, r2;
 		if( (r1 = asCompareStrings("Test", 4, "Test", 4)) != 0 )

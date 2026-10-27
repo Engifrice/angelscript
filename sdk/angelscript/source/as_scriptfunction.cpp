@@ -392,6 +392,7 @@ void asCScriptFunction::AllocateScriptFunctionData()
 
 	scriptData->stackNeeded      = 0;
 	scriptData->variableSpace    = 0;
+	scriptData->frameAlignment   = AS_ARG_SLOT_DWORDS*4;
 	scriptData->scriptSectionIdx = -1;
 	scriptData->declaredAt       = 0;
 	scriptData->jitFunction      = 0;
@@ -657,9 +658,43 @@ int asCScriptFunction::GetSpaceNeededForArguments()
 	// We need to check the size for each type
 	int s = 0;
 	for( asUINT n = 0; n < parameterTypes.GetLength(); n++ )
-		s += parameterTypes[n].GetSizeOnStackDWords();
+		s += parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	return s;
+}
+
+// internal
+void asCScriptFunction::CalculateFrameAlignment()
+{
+	asASSERT( scriptData );
+
+	// The frame pointer is always aligned to 8 bytes, as all values pushed on the stack take up
+	// 8 bytes. Value types stored inline on the stack may require a larger alignment
+	asUINT alignment = AS_ARG_SLOT_DWORDS*4;
+	for( asUINT n = 0; n < scriptData->variables.GetLength(); n++ )
+	{
+		asSScriptVariable *var = scriptData->variables[n];
+
+		// Skip the function arguments, as these are not stored in the frame
+		if( var->stackOffset <= 0 || var->onHeap )
+			continue;
+
+		if( var->type.IsObject() && !var->type.IsObjectHandle() && !var->type.IsReference() )
+		{
+			asUINT varAlignment = var->type.GetAlignment();
+			if( varAlignment > alignment )
+				alignment = varAlignment;
+		}
+	}
+
+	scriptData->frameAlignment = alignment;
+}
+
+// internal
+int asCScriptFunction::GetFrameRealignmentDWords() const
+{
+	// The arguments may have to be moved down this much on the stack to align the frame pointer
+	return int(scriptData->frameAlignment/4 - AS_ARG_SLOT_DWORDS);
 }
 
 // internal
@@ -1991,7 +2026,7 @@ asCScriptFunction* asCScriptFunction::GetCalledFunction(asDWORD programPos)
 				else
 					return 0;
 			}
-			paramPos -= parameterTypes[v].GetSizeOnStackDWords();
+			paramPos -= parameterTypes[v].GetSizeOfArgSlotDWords();
 		}
 	}
 

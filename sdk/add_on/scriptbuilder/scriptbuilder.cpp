@@ -7,7 +7,7 @@
 using namespace std;
 
 #include <stdio.h>
-#if defined(_MSC_VER) && !defined(_WIN32_WCE) && !defined(__S3E__)
+#if (defined(_MSC_VER) || defined(__MINGW32__)) && !defined(_WIN32_WCE) && !defined(__S3E__)
 #include <direct.h>
 #endif
 #ifdef _WIN32_WCE
@@ -179,20 +179,22 @@ int CScriptBuilder::LoadScriptSection(const char* filename)
 {
 	// Open the script file
 	string scriptFile = filename;
-#if _MSC_VER >= 1500 && !defined(__S3E__)
-  #ifdef _WIN32
+#if defined(_WIN32) && !defined(__S3E__)
 	// Convert the filename from UTF8 to UTF16
 	wchar_t bufUTF16_name[10000] = {0};
 	wchar_t bufUTF16_mode[10] = {0};
 	MultiByteToWideChar(CP_UTF8, 0, filename, -1, bufUTF16_name, 10000);
 	MultiByteToWideChar(CP_UTF8, 0, "rb", -1, bufUTF16_mode, 10);
 
+  #if _MSC_VER >= 1500
 	FILE *f = 0;
 	_wfopen_s(&f, bufUTF16_name, bufUTF16_mode);
   #else
+	FILE *f = _wfopen(bufUTF16_name, bufUTF16_mode);
+  #endif
+#elif _MSC_VER >= 1500 && !defined(__S3E__)
 	FILE* f = 0;
 	fopen_s(&f, scriptFile.c_str(), "rb");
-  #endif
 #else
 	FILE *f = fopen(scriptFile.c_str(), "rb");
 #endif
@@ -1217,7 +1219,7 @@ string GetCurrentDir()
 	#elif defined(_M_ARM)
 	// TODO: How to determine current working dir on Windows Phone?
 	return "";
-	#elif defined(_MSC_VER)
+	#elif defined(_MSC_VER) || defined(__MINGW32__)
 	return _getcwd(buffer, (int)1024);
 	#else
 	std::string filename;

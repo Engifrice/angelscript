@@ -2,6 +2,7 @@
 #include "../../../add_on/scriptdictionary/scriptdictionary.h"
 #include "../../../add_on/scriptany/scriptany.h"
 #include "../../../add_on/scripthandle/scripthandle.h"
+#include "../../../add_on/autowrapper/aswrappedcall.h"
 
 namespace TestCastOp
 {
@@ -203,6 +204,14 @@ public:
 	}
 };
 
+// The ?&out argument is a reference and a type id, which the autowrapper doesn't support.
+// opCast is virtual so the same wrapper serves both GenericClass and GenericClass2.
+static void GenericClass_opCast_Generic(asIScriptGeneric* gen)
+{
+	GenericClass* self = (GenericClass*)gen->GetObject();
+	self->opCast((void**)gen->GetArgAddress(0), gen->GetArgTypeId(0));
+}
+
 
 bool Test()
 {
@@ -228,17 +237,17 @@ bool Test()
 		engine->RegisterGlobalFunction("void assert(bool)", asFUNCTION(Assert), asCALL_GENERIC);
 
 		engine->RegisterObjectType("Generic", 0, asOBJ_REF);
-		engine->RegisterObjectBehaviour("Generic", asBEHAVE_FACTORY, "Generic @f()", asFUNCTION(GenericClass::factory), asCALL_CDECL);
-		engine->RegisterObjectBehaviour("Generic", asBEHAVE_ADDREF, "void f()", asMETHOD(GenericClass, addref), asCALL_THISCALL);
-		engine->RegisterObjectBehaviour("Generic", asBEHAVE_RELEASE, "void f()", asMETHOD(GenericClass, release), asCALL_THISCALL);
+		engine->RegisterObjectBehaviour("Generic", asBEHAVE_FACTORY, "Generic @f()", WRAP_FN(GenericClass::factory), asCALL_GENERIC);
+		engine->RegisterObjectBehaviour("Generic", asBEHAVE_ADDREF, "void f()", WRAP_MFN(GenericClass, addref), asCALL_GENERIC);
+		engine->RegisterObjectBehaviour("Generic", asBEHAVE_RELEASE, "void f()", WRAP_MFN(GenericClass, release), asCALL_GENERIC);
 		engine->RegisterObjectProperty("Generic", "int type", offsetof(GenericClass, type));
-		engine->RegisterObjectMethod("Generic", "void opCast(?&out)", asMETHOD(GenericClass, opCast), asCALL_THISCALL);
+		engine->RegisterObjectMethod("Generic", "void opCast(?&out)", asFUNCTION(GenericClass_opCast_Generic), asCALL_GENERIC);
 		engine->RegisterObjectType("Generic2", 0, asOBJ_REF);
-		engine->RegisterObjectBehaviour("Generic2", asBEHAVE_FACTORY, "Generic2 @f()", asFUNCTION(GenericClass2::factory), asCALL_CDECL);
-		engine->RegisterObjectBehaviour("Generic2", asBEHAVE_ADDREF, "void f()", asMETHOD(GenericClass2, addref), asCALL_THISCALL);
-		engine->RegisterObjectBehaviour("Generic2", asBEHAVE_RELEASE, "void f()", asMETHOD(GenericClass2, release), asCALL_THISCALL);
+		engine->RegisterObjectBehaviour("Generic2", asBEHAVE_FACTORY, "Generic2 @f()", WRAP_FN(GenericClass2::factory), asCALL_GENERIC);
+		engine->RegisterObjectBehaviour("Generic2", asBEHAVE_ADDREF, "void f()", WRAP_MFN(GenericClass2, addref), asCALL_GENERIC);
+		engine->RegisterObjectBehaviour("Generic2", asBEHAVE_RELEASE, "void f()", WRAP_MFN(GenericClass2, release), asCALL_GENERIC);
 		engine->RegisterObjectProperty("Generic2", "int type", offsetof(GenericClass2, type));
-		engine->RegisterObjectMethod("Generic2", "void opCast(?&out)", asMETHOD(GenericClass2, opCast), asCALL_THISCALL);
+		engine->RegisterObjectMethod("Generic2", "void opCast(?&out)", asFUNCTION(GenericClass_opCast_Generic), asCALL_GENERIC);
 
 		r = ExecuteString(engine, 
 			"Generic2 @g2 = Generic2(); \n"

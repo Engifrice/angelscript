@@ -21,13 +21,6 @@ set(ANGELSCRIPT_VERSION_MINOR ${CMAKE_MATCH_2})
 set(ANGELSCRIPT_VERSION_PATCH ${CMAKE_MATCH_3})
 set(PROJECT_VERSION ${ANGELSCRIPT_VERSION_MAJOR}.${ANGELSCRIPT_VERSION_MINOR}.${ANGELSCRIPT_VERSION_PATCH})
 
-set(ARCHFLAGS "${CMAKE_SYSTEM_PROCESSOR}")
-if (APPLE AND NOT IOS)
-  if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm")
-    set(ARCHFLAGS "aarch64")
-  endif ()
-endif ()
-
 message(STATUS "Configuring angelscript ${PROJECT_VERSION}")
 
 find_package(Threads)
@@ -74,11 +67,6 @@ set(ANGELSCRIPT_SOURCE
     ../../source/as_builder.cpp
     ../../source/as_bytecode.cpp
     ../../source/as_callfunc.cpp
-    ../../source/as_callfunc_mips.cpp
-    ../../source/as_callfunc_x86.cpp
-    ../../source/as_callfunc_x64_gcc.cpp
-    ../../source/as_callfunc_x64_msvc.cpp
-    ../../source/as_callfunc_x64_mingw.cpp
     ../../source/as_compiler.cpp
     ../../source/as_configgroup.cpp
     ../../source/as_context.cpp
@@ -105,66 +93,6 @@ set(ANGELSCRIPT_SOURCE
     ../../source/as_variablescope.cpp
 )
 
-if(MSVC AND CMAKE_CL_64)
-    enable_language(ASM_MASM)
-    if(CMAKE_ASM_MASM_COMPILER_WORKS)
-        set(ANGELSCRIPT_SOURCE ${ANGELSCRIPT_SOURCE} ../../source/as_callfunc_x64_msvc_asm.asm)
-    else()
-        message(FATAL ERROR "MSVC x86_64 target requires a working assembler")
-    endif()
-endif()
-
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND WIN32 AND NOT MSVC)
-	enable_language(ASM)
-    if(CMAKE_ASM_COMPILER_WORKS)
-        set(ANGELSCRIPT_SOURCE ${ANGELSCRIPT_SOURCE} ../../source/as_callfunc_x64_msvc_clang.S)
-		set(AS_NO_EXCEPTIONS 1)
-    else()
-        message(FATAL ERROR "MSVC x86_64 target requires a working assembler")
-    endif()
-endif()
-
-if(${ARCHFLAGS} MATCHES "^arm")
-    enable_language(ASM)
-    if(CMAKE_ASM_COMPILER_WORKS)
-        set(ANGELSCRIPT_SOURCE ${ANGELSCRIPT_SOURCE} ../../source/as_callfunc_arm.cpp ../../source/as_callfunc_arm_gcc.S)
-        set_property(SOURCE ../../source/as_callfunc_arm_gcc.S APPEND PROPERTY COMPILE_FLAGS " -Wa,-mimplicit-it=always")
-    else()
-        message(FATAL ERROR "ARM target requires a working assembler")
-    endif()
-endif()
-
-if(${ARCHFLAGS} MATCHES "^aarch64")
-    enable_language(ASM)
-    if(CMAKE_ASM_COMPILER_WORKS)
-        if(NOT APPLE)
-            set(ANGELSCRIPT_SOURCE ${ANGELSCRIPT_SOURCE} ../../source/as_callfunc_arm64.cpp ../../source/as_callfunc_arm64_gcc.S)
-        else()
-            set(ANGELSCRIPT_SOURCE ${ANGELSCRIPT_SOURCE} ../../source/as_callfunc_arm64.cpp ../../source/as_callfunc_arm64_xcode.S)
-        endif()
-    else()
-        message(FATAL ERROR "ARM target requires a working assembler")
-    endif()
-endif()
-
-if(${ARCHFLAGS} MATCHES "riscv64")
-    enable_language(ASM)
-    if(CMAKE_ASM_COMPILER_WORKS)
-        set(ANGELSCRIPT_SOURCE ${ANGELSCRIPT_SOURCE} ../../source/as_callfunc_riscv64.cpp ../../source/as_callfunc_riscv64_gcc.S)
-    else()
-        message(FATAL ERROR "RISC-V 64 target requires a working assembler")
-    endif()
-endif()
-
-if(${ARCHFLAGS} MATCHES "^e2k")
-    enable_language(ASM)
-    if(CMAKE_ASM_COMPILER_WORKS)
-        set(ANGELSCRIPT_SOURCE ${ANGELSCRIPT_SOURCE} ../../source/as_callfunc_e2k.cpp ../../source/as_callfunc_e2k.S)
-    else()
-        message(FATAL ERROR "E2K target requires a working assembler")
-    endif()
-endif()
-
 if(MSVC)
     set(CMAKE_DEBUG_POSTFIX "d")
 endif()
@@ -186,6 +114,21 @@ if(MSVC)
 endif()
 
 target_compile_definitions(${ANGELSCRIPT_LIBRARY_NAME} PRIVATE -DANGELSCRIPT_EXPORT -D_LIB)
+
+# Only the generic calling convention is supported, native calling conventions are not compiled in
+target_compile_definitions(${ANGELSCRIPT_LIBRARY_NAME} PUBLIC AS_MAX_PORTABILITY)
+
+target_compile_features(${ANGELSCRIPT_LIBRARY_NAME} PRIVATE cxx_std_11)
+
+# The library relies on pointer casts that don't guarantee strict aliasing, see the manual
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
+    target_compile_options(${ANGELSCRIPT_LIBRARY_NAME} PRIVATE -fno-strict-aliasing)
+endif()
+
+# Applications linking with the shared library must import the functions from it
+if(BUILD_SHARED_LIBS)
+    target_compile_definitions(${ANGELSCRIPT_LIBRARY_NAME} INTERFACE ANGELSCRIPT_DLL_LIBRARY_IMPORT)
+endif()
 
 if(AS_NO_EXCEPTIONS)
 	target_compile_definitions(${ANGELSCRIPT_LIBRARY_NAME} PRIVATE AS_NO_EXCEPTIONS)

@@ -136,9 +136,6 @@ public:
 	asCObjectProperty *AddPropertyToClass(const asCString &name, const asCDataType &dt, bool isPrivate, bool isProtected, bool isInherited);
 	void ReleaseAllProperties();
 
-#ifdef WIP_16BYTE_ALIGN
-	int                          alignment;
-#endif
 	asCArray<asCObjectProperty*> properties;
 	asCArray<int>                methods;
 

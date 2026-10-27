@@ -48,6 +48,12 @@ BEGIN_AS_NAMESPACE
 #define SAVE_TO_BIT(dst, val, bit) ((dst) |= ((val) << (bit)))
 #define LOAD_FROM_BIT(dst, val, bit) ((dst) = ((val) >> (bit)) & 1)
 
+// The saved bytecode starts with these values, so bytecode that was saved by an incompatible
+// version of the library is rejected when loading it. The version must be incremented whenever
+// the format of the saved bytecode changes.
+static const asDWORD BYTECODE_MAGIC   = 0x41534246; // The stream starts with the characters "ASBF"
+static const asDWORD BYTECODE_VERSION = 1;
+
 asCReader::asCReader(asCModule* _module, asIBinaryStream* _stream, asCScriptEngine* _engine)
 	: module(_module), stream(_stream), engine(_engine), noDebugInfo(false), error(false), bytesRead(0), lastCompositeProp(0)
 {
@@ -143,6 +149,19 @@ int asCReader::ReadInner()
 	// This function will load each entity one by one from the stream.
 	// If any error occurs, it will return to the caller who is
 	// responsible for cleaning up the partially loaded entities.
+
+	// Verify that the bytecode was saved by a compatible version of the library
+	asDWORD magic = 0, version = 0;
+	ReadData(&magic, 4);
+	if( !error )
+		ReadData(&version, 4);
+	if( error )
+		return asERROR;
+	if( magic != BYTECODE_MAGIC || version != BYTECODE_VERSION )
+	{
+		Error(TXT_INCOMPATIBLE_BYTECODE);
+		return asERROR;
+	}
 
 	engine->deferValidationOfTemplateTypes = true;
 
@@ -687,7 +706,8 @@ void asCReader::ReadUsedFunctions()
 		error = true;
 		return;
 	}
-	memset(usedFunctions.AddressOf(), 0, sizeof(asCScriptFunction *)*count);
+	if( count )
+		memset(usedFunctions.AddressOf(), 0, sizeof(asCScriptFunction *)*count);
 
 	for( asUINT n = 0; n < usedFunctions.GetLength(); n++ )
 	{
@@ -1084,7 +1104,8 @@ void asCReader::ReadFunctionSignature(asCScriptFunction *func, asCObjectType **p
 		error = true;
 		return;
 	}
-	memset(func->inOutFlags.AddressOf(), 0, sizeof(asETypeModifiers)*func->inOutFlags.GetLength());
+	if( func->inOutFlags.GetLength() )
+		memset(func->inOutFlags.AddressOf(), 0, sizeof(asETypeModifiers)*func->inOutFlags.GetLength());
 	if (func->parameterTypes.GetLength() > 0)
 	{
 		count = ReadEncodedUInt();
@@ -1612,7 +1633,10 @@ void asCReader::ReadTypeDeclaration(asCTypeInfo *type, int phase, bool *isExtern
 
 		// Reset the size of script classes, since it will be recalculated as properties are added
 		if( (type->flags & asOBJ_SCRIPT_OBJECT) && type->size != 0 )
+		{
 			type->size = sizeof(asCScriptObject);
+			type->alignment = alignof(asCScriptObject);
+		}
 
 		asCObjectType *ot = CastToObjectType(type);
 		if (ot)
@@ -1667,6 +1691,7 @@ void asCReader::ReadTypeDeclaration(asCTypeInfo *type, int phase, bool *isExtern
 				return;
 			}
 			t->enumType = asCDataType::CreatePrimitive(tt, false);
+			t->alignment = t->enumType.GetAlignment();
 
 			int count = SanityCheck(ReadEncodedUInt(), 1000000);
 			bool sharedExists = existingShared.MoveTo(0, type);
@@ -1722,6 +1747,7 @@ void asCReader::ReadTypeDeclaration(asCTypeInfo *type, int phase, bool *isExtern
 			asASSERT(td);
 			eTokenType t = (eTokenType)ReadEncodedUInt();
 			td->aliasForType = asCDataType::CreatePrimitive(t, false);
+			td->alignment = td->aliasForType.GetAlignment();
 		}
 		else
 		{
@@ -2672,7 +2698,7 @@ void asCReader::ReadByteCode(asCScriptFunction *func)
 
 				// Read the argument
 				asQWORD qw = ReadEncodedUInt64();
-				*(asQWORD*)bc = qw;
+				memcpy(bc, &qw, sizeof(qw)); // The argument is only aligned to 4 bytes
 				bc += 2;
 			}
 			break;
@@ -2683,7 +2709,7 @@ void asCReader::ReadByteCode(asCScriptFunction *func)
 
 				// Read the first argument
 				asQWORD qw = ReadEncodedUInt64();
-				*(asQWORD*)bc = qw;
+				memcpy(bc, &qw, sizeof(qw)); // The argument is only aligned to 4 bytes
 				bc += 2;
 
 				// Read the second argument
@@ -2702,7 +2728,7 @@ void asCReader::ReadByteCode(asCScriptFunction *func)
 
 				// Read the second argument
 				asQWORD qw = ReadEncodedUInt64();
-				*(asQWORD*)bc = qw;
+				memcpy(bc, &qw, sizeof(qw)); // The argument is only aligned to 4 bytes
 				bc += 2;
 
 				// Read the third argument
@@ -2722,7 +2748,7 @@ void asCReader::ReadByteCode(asCScriptFunction *func)
 
 				// Read the argument
 				asQWORD qw = ReadEncodedUInt64();
-				*(asQWORD*)bc = qw;
+				memcpy(bc, &qw, sizeof(qw)); // The argument is only aligned to 4 bytes
 				bc += 2;
 			}
 			break;
@@ -2949,8 +2975,7 @@ void asCReader::TranslateFunction(asCScriptFunction *func)
 			c == asBC_OBJTYPE )
 		{
 			// Translate the index to the true object type
-			asPWORD *ot = (asPWORD*)&bc[n+1];
-			*(asCObjectType**)ot = CastToObjectType(FindType(int(*ot)));
+			asBC_PTRARG(&bc[n]) = (asPWORD)CastToObjectType(FindType(int(asBC_PTRARG(&bc[n]))));
 		}
 		else if( c == asBC_TYPEID ||
 			     c == asBC_Cast )
@@ -3041,14 +3066,12 @@ void asCReader::TranslateFunction(asCScriptFunction *func)
 		else if( c == asBC_FuncPtr )
 		{
 			// Translate the index to the func pointer
-			asPWORD *fid = (asPWORD*)&bc[n+1];
-			*fid = (asPWORD)FindFunction(int(*fid));
+			asBC_PTRARG(&bc[n]) = (asPWORD)FindFunction(int(asBC_PTRARG(&bc[n])));
 		}
 		else if( c == asBC_ALLOC )
 		{
 			// Translate the index to the true object type
-			asPWORD *arg = (asPWORD*)&bc[n+1];
-			*(asCObjectType**)arg = CastToObjectType(FindType(int(*arg)));
+			asBC_PTRARG(&bc[n]) = (asPWORD)CastToObjectType(FindType(int(asBC_PTRARG(&bc[n]))));
 
 			// The constructor function id must be translated, unless it is zero
 			int *fid = (int*)&bc[n+1+AS_PTR_SIZE];
@@ -3101,11 +3124,11 @@ void asCReader::TranslateFunction(asCScriptFunction *func)
 				 c == asBC_SetG4    )
 		{
 			// Translate the index to pointer
-			asPWORD *index = (asPWORD*)&bc[n + 1];
-			if ((*index & 1))
+			asPWORD index = asBC_PTRARG(&bc[n]);
+			if ((index & 1))
 			{
-				if ((asUINT(*index)>>1) < usedGlobalProperties.GetLength())
-					*(void**)index = usedGlobalProperties[asUINT(*index)>>1];
+				if ((asUINT(index)>>1) < usedGlobalProperties.GetLength())
+					asBC_PTRARG(&bc[n]) = (asPWORD)usedGlobalProperties[asUINT(index)>>1];
 				else
 				{
 					Error(TXT_INVALID_BYTECODE_d);
@@ -3117,8 +3140,8 @@ void asCReader::TranslateFunction(asCScriptFunction *func)
 				// Only PGA and PshGPtr can hold string constants
 				asASSERT(c == asBC_PGA || c == asBC_PshGPtr);
 
-				if ((asUINT(*index)>>1) < usedStringConstants.GetLength())
-					*(void**)index = usedStringConstants[asUINT(*index)>>1];
+				if ((asUINT(index)>>1) < usedStringConstants.GetLength())
+					asBC_PTRARG(&bc[n]) = (asPWORD)usedStringConstants[asUINT(index)>>1];
 				else
 				{
 					Error(TXT_INVALID_BYTECODE_d);
@@ -3171,10 +3194,8 @@ void asCReader::TranslateFunction(asCScriptFunction *func)
 		else if( c == asBC_FREE )
 		{
 			// Translate the index to the true object type
-			asPWORD *pot = (asPWORD*)&bc[n+1];
-			*(asCObjectType**)pot = CastToObjectType(FindType(int(*pot)));
-
-			asCObjectType *ot = *(asCObjectType**)pot;
+			asCObjectType *ot = CastToObjectType(FindType(int(asBC_PTRARG(&bc[n]))));
+			asBC_PTRARG(&bc[n]) = (asPWORD)ot;
 			if( ot && (ot->flags & asOBJ_LIST_PATTERN) )
 			{
 				if( listAdjusters.GetLength() == 0 )
@@ -3275,8 +3296,9 @@ void asCReader::TranslateFunction(asCScriptFunction *func)
 		n += asBCTypeSize[asBCInfo[c].type];
 	}
 
-	// Adjust the space needed for local variables
-	func->scriptData->variableSpace = AdjustStackPosition(func->scriptData->variableSpace);
+	// Adjust the space needed for local variables. The values pushed on the stack must
+	// be aligned to 8 bytes, so the space for the local variables is rounded up
+	func->scriptData->variableSpace = alignOffset(AdjustStackPosition(func->scriptData->variableSpace), AS_ARG_SLOT_DWORDS);
 
 	// Adjust the variable information. This will be used during the adjustment below
 	for( n = 0; n < func->scriptData->variables.GetLength(); n++ )
@@ -3284,6 +3306,9 @@ void asCReader::TranslateFunction(asCScriptFunction *func)
 		func->scriptData->variables[n]->declaredAtProgramPos = instructionNbrToPos[func->scriptData->variables[n]->declaredAtProgramPos];
 		func->scriptData->variables[n]->stackOffset = AdjustStackPosition(func->scriptData->variables[n]->stackOffset);
 	}
+
+	// Determine the alignment the frame pointer needs for the local variables to be aligned
+	func->CalculateFrameAlignment();
 
 	// Adjust the get offsets. This must be done in the second iteration because
 	// it relies on the function ids and variable position already being correct in the
@@ -3366,12 +3391,9 @@ int asCReader::SListAdjuster::AdjustOffset(int offset)
 	// What is being expected at this position?
 	if( patternNode->type == asLPT_REPEAT || patternNode->type == asLPT_REPEAT_SAME )
 	{
-		// Align the offset to 4 bytes boundary
-		if( maxOffset & 0x3 )
-		{
-			maxOffset += 4 - (maxOffset & 0x3);
-			lastAdjustedOffset = maxOffset;
-		}
+		// The count is aligned to 4 bytes
+		maxOffset = alignOffset(maxOffset, 4);
+		lastAdjustedOffset = maxOffset;
 
 		// Don't move the patternNode yet because the caller must make a call to SetRepeatCount too
 		maxOffset += 4;
@@ -3388,19 +3410,13 @@ int asCReader::SListAdjuster::AdjustOffset(int offset)
 				if( repeatCount > 0 )
 					repeatCount--;
 
-				asCDataType nextdt = patternType->engine->GetDataTypeFromTypeId(nextTypeId);
-				asUINT size;
-				if(nextdt.IsObjectHandle() || (nextdt.GetTypeInfo() && (nextdt.GetTypeInfo()->flags & asOBJ_REF)) )
-					size = AS_PTR_SIZE*4;
-				else
-					size = nextdt.GetSizeInMemoryBytes();
+				// A type id of 0 means a null handle
+				asCDataType nextdt = nextTypeId ? patternType->engine->GetDataTypeFromTypeId(nextTypeId) : asCDataType::CreateNullHandle();
+				asUINT size = nextdt.GetSizeInListBuffer();
 
-				// Align the offset to 4 bytes boundary
-				if( size >= 4 && (maxOffset & 0x3) )
-				{
-					maxOffset += 4 - (maxOffset & 0x3);
-					lastAdjustedOffset = maxOffset;
-				}
+				// The value is aligned to its natural alignment
+				maxOffset = alignOffset(maxOffset, nextdt.GetAlignment());
+				lastAdjustedOffset = maxOffset;
 
 				// Only move the patternNode if we're not expecting any more repeated entries
 				if( repeatCount == 0 )
@@ -3414,12 +3430,9 @@ int asCReader::SListAdjuster::AdjustOffset(int offset)
 			}
 			else
 			{
-				// Align the offset to 4 bytes boundary
-				if( maxOffset & 0x3 )
-				{
-					maxOffset += 4 - (maxOffset & 0x3);
-					lastAdjustedOffset = maxOffset;
-				}
+				// The type id is aligned to 4 bytes
+				maxOffset = alignOffset(maxOffset, 4);
+				lastAdjustedOffset = maxOffset;
 
 				// The first adjustment is for the typeId
 				maxOffset += 4;
@@ -3429,12 +3442,9 @@ int asCReader::SListAdjuster::AdjustOffset(int offset)
 		}
 		else
 		{
-			// Determine the size of the element
-			asUINT size;
-			if( dt.IsObjectHandle() || (dt.GetTypeInfo() && (dt.GetTypeInfo()->flags & asOBJ_REF)) )
-				size = AS_PTR_SIZE*4;
-			else
-				size = dt.GetSizeInMemoryBytes();
+			// Determine the size and alignment of the element
+			asUINT size = dt.GetSizeInListBuffer();
+			asUINT alignment = dt.GetAlignment();
 
 			// If values are skipped, the offset needs to be incremented
 			while( nextOffset <= offset )
@@ -3442,9 +3452,8 @@ int asCReader::SListAdjuster::AdjustOffset(int offset)
 				if( repeatCount > 0 )
 					repeatCount--;
 
-				// Align the offset to 4 bytes boundary
-				if( size >= 4 && (maxOffset & 0x3) )
-					maxOffset += 4 - (maxOffset & 0x3);
+				// The value is aligned to its natural alignment
+				maxOffset = alignOffset(maxOffset, alignment);
 
 				lastAdjustedOffset = maxOffset;
 				nextOffset += 1;
@@ -3520,6 +3529,19 @@ void asCReader::SListAdjuster::SetNextType(int typeId)
 {
 	asASSERT( nextTypeId == -1 );
 
+	if( typeId == 0 )
+	{
+		// A null handle is not written to the buffer, as the buffer is already cleared, so there
+		// will be no adjustment for the value. Reserve the space for it and move to the next element
+		maxOffset = alignOffset(maxOffset, sizeof(void*)) + AS_PTR_SIZE*4;
+
+		if( repeatCount > 0 )
+			repeatCount--;
+		if( repeatCount == 0 )
+			patternNode = patternNode->next;
+		return;
+	}
+
 	nextTypeId = typeId;
 }
 
@@ -3577,8 +3599,8 @@ void asCReader::CalculateStackNeeded(asCScriptFunction *func)
 
 						// Calculate the actual size of arguments for this function call
 						stackInc = -(called->GetSpaceNeededForArguments() + // size of fixed arguments
-							(numArgs - int(called->parameterTypes.GetLength()))*called->parameterTypes[called->parameterTypes.GetLength()-1].GetSizeOnStackDWords() + // size of dynamic arguments
-							1); // argument count
+							(numArgs - int(called->parameterTypes.GetLength()))*called->parameterTypes[called->parameterTypes.GetLength()-1].GetSizeOfArgSlotDWords() + // size of dynamic arguments
+							AS_ARG_SLOT_DWORDS); // argument count
 					}
 					else
 						stackInc = -called->GetSpaceNeededForArguments();
@@ -3681,108 +3703,84 @@ void asCReader::CalculateStackNeeded(asCScriptFunction *func)
 		}
 	}
 
-	func->scriptData->stackNeeded = largestStackUsed;
+	// Include the space that may be needed to align the frame pointer, same as in the compiler
+	func->scriptData->stackNeeded = largestStackUsed + func->GetFrameRealignmentDWords();
+}
+
+// Returns the local variables of the function, one for each position on the stack, ordered by
+// the position. Variables in different scopes can share the same position, but then they have the same type
+static void GetLocalVariableSlots(asCScriptFunction *func, asCArray<asSScriptVariable*> &slots)
+{
+	slots.SetLength(0);
+	for( asUINT n = 0; n < func->scriptData->variables.GetLength(); n++ )
+	{
+		asSScriptVariable *var = func->scriptData->variables[n];
+
+		// Skip the function parameters
+		if( var->stackOffset <= 0 )
+			continue;
+
+		// Find where to insert the variable to keep the list ordered
+		asUINT pos = 0;
+		while( pos < slots.GetLength() && slots[pos]->stackOffset < var->stackOffset )
+			pos++;
+		if( pos < slots.GetLength() && slots[pos]->stackOffset == var->stackOffset )
+			continue;
+
+		slots.PushLast(0);
+		for( asUINT m = slots.GetLength() - 1; m > pos; m-- )
+			slots[m] = slots[m-1];
+		slots[pos] = var;
+	}
 }
 
 void asCReader::CalculateAdjustmentByPos(asCScriptFunction *func)
 {
-	// Adjust the offset of all negative variables (parameters) as
-	// all pointers have been stored as having a size of 1 dword
+	// The arguments are stored in slots of 8 bytes, which is the same on all supported platforms,
+	// so the offsets of the parameters have been saved as is and don't need any adjustment
 	asUINT n;
-	asCArray<int> adjustments;
-	asUINT offset = 0;
-	if( func->objectType )
-	{
-		adjustments.PushLast(offset);
-		adjustments.PushLast(1-AS_PTR_SIZE);
-		offset += 1;
-	}
-	if( func->DoesReturnOnStack() )
-	{
-		adjustments.PushLast(offset);
-		adjustments.PushLast(1-AS_PTR_SIZE);
-		offset += 1;
-	}
-	for( n = 0; n < func->parameterTypes.GetLength(); n++ )
-	{
-		if( !func->parameterTypes[n].IsPrimitive() ||
-			func->parameterTypes[n].IsReference() )
-		{
-			adjustments.PushLast(offset);
-			adjustments.PushLast(1-AS_PTR_SIZE);
-			offset += 1;
-		}
-		else
-		{
-			asASSERT( func->parameterTypes[n].IsPrimitive() );
-			offset += func->parameterTypes[n].GetSizeOnStackDWords();
-		}
-	}
-
-	// Build look-up table with the adjustments for each stack position
+	asUINT offset = (func->objectType ? AS_PTR_SIZE : 0) + (func->DoesReturnOnStack() ? AS_PTR_SIZE : 0) + func->GetSpaceNeededForArguments();
 	adjustNegativeStackByPos.SetLength(offset);
-	memset(adjustNegativeStackByPos.AddressOf(), 0, adjustNegativeStackByPos.GetLength()*sizeof(int));
-	for( n = 0; n < adjustments.GetLength(); n+=2 )
+	if( adjustNegativeStackByPos.GetLength() )
+		memset(adjustNegativeStackByPos.AddressOf(), 0, adjustNegativeStackByPos.GetLength()*sizeof(int));
+
+	// The bytecode has been stored as if all object variables and handles take up only 1 dword,
+	// and without any padding between the variables. The layout must be recomputed with the sizes
+	// and alignments of the types on the current platform, in the same way the compiler does it.
+	asCArray<asSScriptVariable*> slots;
+	GetLocalVariableSlots(func, slots);
+
+	int realEnd = 0; // The last dword used by the previous variable in the real layout
+	int normEnd = 0; // The last dword used by the previous variable in the saved layout
+	adjustByPos.SetLength(1);
+	adjustByPos[0] = 0;
+	for( n = 0; n < slots.GetLength(); n++ )
 	{
-		int pos    = adjustments[n];
-		int adjust = adjustments[n+1];
+		int size      = slots[n]->type.GetSizeOfLocalDWords(slots[n]->onHeap);
+		int alignment = slots[n]->type.GetAlignmentOfLocalDWords(slots[n]->onHeap);
+		int normSize  = (slots[n]->type.IsObject() || slots[n]->type.IsObjectHandle()) ? 1 : size;
+		int normLast  = slots[n]->stackOffset;
 
-		for( asUINT i = pos+1; i < adjustNegativeStackByPos.GetLength(); i++ )
-			adjustNegativeStackByPos[i] += adjust;
-	}
-
-	// The bytecode has been stored as if all object variables take up only 1 dword.
-	// It is necessary to adjust to the size according to the current platform.
-	adjustments.SetLength(0);
-	int highestPos = 0;
-	for (n = 0; n < func->scriptData->variables.GetLength(); n++)
-	{
-		// Skip function parameters as these are adjusted by adjustNegativeStackByPos
-		if (func->scriptData->variables[n]->stackOffset <= 0)
-			continue;
-
-		asCDataType t = func->scriptData->variables[n]->type;
-		if (!t.IsObject() && !t.IsObjectHandle())
-			continue;
-
-		// Determing the size of the variable currently occupies on the stack
-		int size = AS_PTR_SIZE;
-		if (t.GetTypeInfo() && (t.GetTypeInfo()->GetFlags() & asOBJ_VALUE) && !func->scriptData->variables[n]->onHeap)
-			size = t.GetSizeInMemoryDWords();
-
-		// Check if type has a different size than stored
-		if (size > 1)
+		// The saved layout has no gaps between the variables
+		if( normLast - normSize != normEnd )
 		{
-			if (func->scriptData->variables[n]->stackOffset > highestPos)
-				highestPos = func->scriptData->variables[n]->stackOffset;
-
-			adjustments.PushLast(func->scriptData->variables[n]->stackOffset);
-			adjustments.PushLast(size - 1);
+			Error(TXT_INVALID_BYTECODE_d);
+			return;
 		}
+
+		int realLast = alignOffset(realEnd + size, alignment);
+
+		// Positions up to the end of this variable are moved by the same amount
+		adjustByPos.SetLength(normLast+1);
+		for( int p = normEnd + 1; p <= normLast; p++ )
+			adjustByPos[p] = realLast - normLast;
+
+		realEnd = realLast;
+		normEnd = normLast;
 	}
 
-	// Count position 0 too
-	adjustByPos.SetLength(highestPos+1);
-	memset(adjustByPos.AddressOf(), 0, adjustByPos.GetLength()*sizeof(int));
-
-	// Build look-up table with the adjustments for each stack position
-	for( n = 0; n < adjustments.GetLength(); n+=2 )
-	{
-		int pos    = adjustments[n];
-		int adjust = adjustments[n+1];
-
-		// If multiple variables in different scope occupy the same position they must have the same size
-		asASSERT(adjustByPos[pos] == 0 || adjustByPos[pos] == adjust);
-
-		adjustByPos[pos] = adjust;
-	}
-	// Accumulate adjustments
-	int adjust = adjustByPos[0];
-	for (asUINT i = 1; i < adjustByPos.GetLength(); i++)
-	{
-		adjust += adjustByPos[i];
-		adjustByPos[i] = adjust;
-	}
+	// Positions above the variables are moved by the same amount as the last variable,
+	// which AdjustStackPosition does by using the last entry in the table
 }
 
 int asCReader::AdjustStackPosition(int pos)
@@ -3805,158 +3803,11 @@ int asCReader::AdjustStackPosition(int pos)
 
 int asCReader::AdjustGetOffset(int offset, asCScriptFunction *func, asDWORD programPos)
 {
-	// TODO: optimize: multiple instructions for the same function doesn't need to look for the function everytime
-	//                 the function can remember where it found the function and check if the programPos is still valid
-
-	// Get offset 0 doesn't need adjustment
-	if( offset == 0 ) return 0;
-
-	bool bcAlloc = false;
-
-	// Find out which function that will be called
-	// TODO: Can the asCScriptFunction::FindNextFunctionCalled be adapted so it can be reused here (support for asBC_ALLOC, asBC_REFCPY and asBC_COPY)?
-	asCScriptFunction *calledFunc = 0;
-	int stackDelta = 0;
-	for( asUINT n = programPos; n < func->scriptData->byteCode.GetLength(); )
-	{
-		asBYTE bc = *(asBYTE*)&func->scriptData->byteCode[n];
-		if( bc == asBC_CALL ||
-			bc == asBC_CALLSYS ||
-			bc == asBC_Thiscall1 ||
-			bc == asBC_CALLINTF ||
-			bc == asBC_ALLOC ||
-			bc == asBC_CALLBND ||
-			bc == asBC_CallPtr )
-		{
-			// The alloc instruction allocates the object memory
-			// so it doesn't take the this pointer as input
-			if (bc == asBC_ALLOC)
-				bcAlloc = true;
-
-			calledFunc = func->GetCalledFunction(n);
-			break;
-		}
-		else if( bc == asBC_REFCPY ||
-				 bc == asBC_COPY )
-		{
-			if( offset == 1 )
-			{
-				// In this case we know there is only 1 pointer on the stack above
-				return offset - (1 - AS_PTR_SIZE);
-			}
-			else
-			{
-				// Since asBC_REFCPY and asBC_COPY only takes 2 pointers on the stack, we know
-				// the offset that adjusted isn't related to the instruction, hence skip over it 
-				// and find the next function after it
-			}
-		}
-
-		// Keep track of the stack size between the
-		// instruction that needs to be adjusted and the call
-		stackDelta += asBCInfo[bc].stackInc;
-
-		n += asBCTypeSize[asBCInfo[bc].type];
-	}
-
-	if( calledFunc == 0 )
-	{
-		Error(TXT_INVALID_BYTECODE_d);
-		return offset;
-	}
-
-	// Count the number of pointers pushed on the stack above the
-	// current offset, and then adjust the offset accordingly
-	asUINT numPtrs = 0;
-	int currOffset = -stackDelta;
-	if( offset > currOffset && calledFunc->GetObjectType() && !bcAlloc )
-	{
-		currOffset++;
-		if( currOffset > 0 )
-			numPtrs++;
-#if AS_PTR_SIZE == 2
-		// For 64bit platforms it is necessary to increment the currOffset by one more
-		// DWORD since the stackDelta was counting the full 64bit size of the pointer
-		else if( stackDelta )
-			currOffset++;
-#endif
-	}
-	if( offset > currOffset && calledFunc->DoesReturnOnStack() )
-	{
-		currOffset++;
-		if( currOffset > 0 )
-			numPtrs++;
-#if AS_PTR_SIZE == 2
-		// For 64bit platforms it is necessary to increment the currOffset by one more
-		// DWORD since the stackDelta was counting the full 64bit size of the pointer
-		else if( stackDelta )
-			currOffset++;
-#endif
-	}
-	if (offset > currOffset && calledFunc->IsVariadic())
-		currOffset++;
-	for( asUINT p = 0; p < calledFunc->parameterTypes.GetLength(); p++ )
-	{
-		if( offset <= currOffset ) break;
-
-		if( !calledFunc->parameterTypes[p].IsPrimitive() ||
-			calledFunc->parameterTypes[p].IsReference() )
-		{
-			currOffset++;
-			if( currOffset > 0 )
-				numPtrs++;
-#if AS_PTR_SIZE == 2
-			// For 64bit platforms it is necessary to increment the currOffset by one more
-			// DWORD since the stackDelta was counting the full 64bit size of the pointer
-			else if( stackDelta )
-				currOffset++;
-#endif
-
-			// The variable arg ? has an additiona 32bit integer with the typeid
-			if( calledFunc->parameterTypes[p].IsAnyType() )
-				currOffset += 1;
-		}
-		else
-		{
-			// Enums or built-in primitives are passed by value
-			asASSERT( calledFunc->parameterTypes[p].IsPrimitive() );
-			currOffset += calledFunc->parameterTypes[p].GetSizeOnStackDWords();
-		}
-	}
-	if (offset > currOffset && calledFunc->IsVariadic())
-	{
-		asCDataType variadicType = calledFunc->parameterTypes[calledFunc->parameterTypes.GetLength() - 1];
-		for (;;)
-		{
-			if (offset <= currOffset) break;
-
-			if (!variadicType.IsPrimitive() ||
-				variadicType.IsReference())
-			{
-				// objects and references are passed by pointer
-				currOffset++;
-				if (currOffset > 0)
-					numPtrs++;
-#if AS_PTR_SIZE == 2
-				// For 64bit platforms it is necessary to increment the currOffset by one more
-				// DWORD since the stackDelta was counting the full 64bit size of the pointer
-				else if (stackDelta)
-					currOffset++;
-#endif
-				// The variable arg ? has an additional 32bit int with the typeid
-				if (variadicType.IsAnyType())
-					currOffset += 1;
-			}
-			else
-			{
-				// built-in primitives or enums are passed by value
-				asASSERT(variadicType.IsPrimitive());
-				currOffset += variadicType.GetSizeOnStackDWords();
-			}
-		}
-	}
-
-	return offset - numPtrs * (1 - AS_PTR_SIZE);
+	// The arguments are stored in slots of 8 bytes, which is the same on all supported
+	// platforms, so the offsets of the arguments have been saved as is
+	UNUSED_VAR(func);
+	UNUSED_VAR(programPos);
+	return offset;
 }
 
 int asCReader::FindTypeId(int idx)
@@ -4030,6 +3881,10 @@ int asCWriter::Write()
 	// TODO: Should be possible to skip saving the enum values. They are usually not needed after the script is compiled anyway
 	// TODO: Should be possible to skip saving the typedefs. They are usually not needed after the script is compiled anyway
 	// TODO: Should be possible to skip saving constants. They are usually not needed after the script is compiled anyway
+
+	// Identify the format so incompatible bytecode can be rejected when loading it
+	WriteData(&BYTECODE_MAGIC, 4);
+	WriteData(&BYTECODE_VERSION, 4);
 
 	// Write the flag as 1byte even on platforms with 4byte booleans
 	WriteEncodedInt64(stripDebugInfo ? 1 : 0);
@@ -4502,8 +4357,9 @@ void asCWriter::WriteFunction(asCScriptFunction* func)
 				WriteString(&func->scriptData->variables[i]->name);
 			}
 
-			// The stack position must be adjusted according to the pointer sizes
-			asUINT data = AdjustStackPosition(func->scriptData->variables[i]->stackOffset) << 1;
+			// The stack position must be adjusted according to the pointer sizes. The position of
+			// parameters is negative, so it is converted before shifting to avoid undefined behaviour
+			asUINT data = asUINT(AdjustStackPosition(func->scriptData->variables[i]->stackOffset)) << 1;
 			// Encode the onHeap flag in the stackOffset to avoid 1 byte increase
 			data |= func->scriptData->variables[i]->onHeap & 1;
 			WriteEncodedInt64(data);
@@ -4913,97 +4769,50 @@ void asCWriter::WriteTypeInfo(asCTypeInfo* ti)
 
 void asCWriter::CalculateAdjustmentByPos(asCScriptFunction *func)
 {
-	// Adjust the offset of all negative variables (parameters) so all pointers will have a size of 1 dword
+	// The arguments are stored in slots of 8 bytes, which is the same on all supported platforms,
+	// so the offsets of the parameters are saved as is and don't need any adjustment
 	asUINT n;
-	asCArray<int> adjustments;
-	asUINT offset = 0;
-	if( func->objectType )
-	{
-		adjustments.PushLast(offset);
-		adjustments.PushLast(1-AS_PTR_SIZE);
-		offset += AS_PTR_SIZE;
-	}
-	if( func->DoesReturnOnStack() )
-	{
-		adjustments.PushLast(offset);
-		adjustments.PushLast(1-AS_PTR_SIZE);
-		offset += AS_PTR_SIZE;
-	}
-	for( n = 0; n < func->parameterTypes.GetLength(); n++ )
-	{
-		if( !func->parameterTypes[n].IsPrimitive() ||
-			func->parameterTypes[n].IsReference() )
-		{
-			adjustments.PushLast(offset);
-			adjustments.PushLast(1-AS_PTR_SIZE);
-			offset += AS_PTR_SIZE;
-		}
-		else
-		{
-			asASSERT( func->parameterTypes[n].IsPrimitive() );
-			offset += func->parameterTypes[n].GetSizeOnStackDWords();
-		}
-	}
-
-	// Build look-up table with the adjustments for each stack position
+	asUINT offset = (func->objectType ? AS_PTR_SIZE : 0) + (func->DoesReturnOnStack() ? AS_PTR_SIZE : 0) + func->GetSpaceNeededForArguments();
 	adjustNegativeStackByPos.SetLength(offset);
-	memset(adjustNegativeStackByPos.AddressOf(), 0, adjustNegativeStackByPos.GetLength()*sizeof(int));
-	for( n = 0; n < adjustments.GetLength(); n+=2 )
-	{
-		int pos    = adjustments[n];
-		int adjust = adjustments[n+1];
+	if( adjustNegativeStackByPos.GetLength() )
+		memset(adjustNegativeStackByPos.AddressOf(), 0, adjustNegativeStackByPos.GetLength()*sizeof(int));
 
-		for( asUINT i = pos+1; i < adjustNegativeStackByPos.GetLength(); i++ )
-			adjustNegativeStackByPos[i] += adjust;
-	}
+	// The local variables are saved as if all object variables and handles take up only 1 dword,
+	// and without any padding between the variables. This makes the saved bytecode independent of
+	// the platform, as the sizes and alignments of value types can differ between platforms. The
+	// layout is recomputed for the platform when the bytecode is loaded, see asCReader.
+	asCArray<asSScriptVariable*> slots;
+	GetLocalVariableSlots(func, slots);
 
-	// Adjust the offset of all positive variables so that all object types and handles have a size of 1 dword
-	// This is similar to how the adjustment is done in the asCReader::TranslateFunction, only the reverse
-	adjustments.SetLength(0);
-	for (n = 0; n < func->scriptData->variables.GetLength(); n++)
-	{
-		// Skip function parameters as these are adjusted by adjustNegativeStackByPos
-		if (func->scriptData->variables[n]->stackOffset <= 0)
-			continue;
-
-		asCDataType t = func->scriptData->variables[n]->type;
-		if (!t.IsObject() && !t.IsObjectHandle())
-			continue;
-
-		// Determing the size of the variable currently occupies on the stack
-		int size = AS_PTR_SIZE;
-		if (t.GetTypeInfo() && (t.GetTypeInfo()->GetFlags() & asOBJ_VALUE) && !func->scriptData->variables[n]->onHeap)
-			size = t.GetSizeInMemoryDWords();
-
-		// If larger than 1 dword, adjust the offsets accordingly
-		if (size > 1)
-		{
-			// How much needs to be adjusted?
-			adjustments.PushLast(func->scriptData->variables[n]->stackOffset);
-			adjustments.PushLast(-(size - 1));
-		}
-	}
-
-	// Build look-up table with the adjustments for each stack position
+	int realEnd = 0; // The last dword used by the previous variable in the real layout
+	int normEnd = 0; // The last dword used by the previous variable in the saved layout
 	adjustStackByPos.SetLength(func->scriptData->stackNeeded+AS_PTR_SIZE); // Add space for a pointer stored in a temporary variable
 	memset(adjustStackByPos.AddressOf(), 0, adjustStackByPos.GetLength()*sizeof(int));
-	for( n = 0; n < adjustments.GetLength(); n+=2 )
+	for( n = 0; n < slots.GetLength(); n++ )
 	{
-		int pos    = adjustments[n];
-		int adjust = adjustments[n+1];
+		int size     = slots[n]->type.GetSizeOfLocalDWords(slots[n]->onHeap);
+		int realLast = slots[n]->stackOffset;
 
-		// If more than one variable in different scopes occupy the same position on the stack they must have the same size
-		asASSERT(adjustStackByPos[pos] == 0 || adjustStackByPos[pos] == adjust);
+		// Only padding is expected between the variables, as all variables are known
+		asASSERT( realLast - size + 1 > realEnd );
+		asASSERT( realLast - size - realEnd < slots[n]->type.GetAlignmentOfLocalDWords(slots[n]->onHeap) );
 
-		adjustStackByPos[pos] = adjust;
+		int normSize = (slots[n]->type.IsObject() || slots[n]->type.IsObjectHandle()) ? 1 : size;
+		int normLast = normEnd + normSize;
+
+		// Positions up to the end of this variable, including the padding before it, are moved by the same amount
+		if( asUINT(realLast) >= adjustStackByPos.GetLength() )
+			adjustStackByPos.SetLength(realLast+1);
+		for( int p = realEnd + 1; p <= realLast; p++ )
+			adjustStackByPos[p] = normLast - realLast;
+
+		realEnd = realLast;
+		normEnd = normLast;
 	}
-	// Accumulate adjustments 
-	int adjust = adjustStackByPos[0];
-	for (asUINT i = 1; i < adjustStackByPos.GetLength(); i++)
-	{
-		adjust += adjustStackByPos[i];
-		adjustStackByPos[i] = adjust;
-	}
+
+	// Positions above the variables are moved by the same amount as the last variable
+	for( asUINT p = realEnd + 1; p < adjustStackByPos.GetLength(); p++ )
+		adjustStackByPos[p] = normEnd - realEnd;
 
 	// Compute the sequence number of each bytecode instruction in order to update the jump offsets
 	asUINT length = func->scriptData->byteCode.GetLength() + 1; // accomodate one more for invisible instructions, e.g. scope end
@@ -5047,180 +4856,11 @@ int asCWriter::AdjustStackPosition(int pos)
 
 int asCWriter::AdjustGetOffset(int offset, asCScriptFunction *func, asDWORD programPos)
 {
-	// TODO: optimize: multiple instructions for the same function doesn't need to look for the function everytime
-	//                 the function can remember where it found the function and check if the programPos is still valid
-
-	// Get offset 0 doesn't need adjustment
-	if( offset == 0 ) return 0;
-
-	bool bcAlloc = false;
-
-	// Find out which function that will be called
-	asCScriptFunction *calledFunc = 0;
-	int stackDelta = 0;
-	for( asUINT n = programPos; n < func->scriptData->byteCode.GetLength(); )
-	{
-		asBYTE bc = *(asBYTE*)&func->scriptData->byteCode[n];
-		if( bc == asBC_CALL ||
-			bc == asBC_CALLSYS ||
-			bc == asBC_Thiscall1 ||
-			bc == asBC_CALLINTF )
-		{
-			// Find the function from the function id in bytecode
-			int funcId = asBC_INTARG(&func->scriptData->byteCode[n]);
-			calledFunc = engine->scriptFunctions[funcId];
-			break;
-		}
-		else if( bc == asBC_ALLOC )
-		{
-			// The alloc instruction doesn't take the object pointer on the stack,
-			// as the memory will be allocated by the instruction itself
-			bcAlloc = true;
-
-			// Find the function from the function id in the bytecode
-			int funcId = asBC_INTARG(&func->scriptData->byteCode[n+AS_PTR_SIZE]);
-			calledFunc = engine->scriptFunctions[funcId];
-			break;
-		}
-		else if( bc == asBC_CALLBND )
-		{
-			// Find the function from the engine's bind array
-			int funcId = asBC_INTARG(&func->scriptData->byteCode[n]);
-			calledFunc = engine->importedFunctions[funcId & ~FUNC_IMPORTED]->importedFunctionSignature;
-			break;
-		}
-		else if( bc == asBC_CallPtr )
-		{
-			int var = asBC_SWORDARG1(&func->scriptData->byteCode[n]);
-			asUINT v;
-			// Find the funcdef from the local variable
-			for (v = 0; v < func->scriptData->variables.GetLength(); v++)
-			{
-				if (func->scriptData->variables[v]->stackOffset == var)
-				{
-					asASSERT(func->scriptData->variables[v]->type.GetTypeInfo());
-					calledFunc = CastToFuncdefType(func->scriptData->variables[v]->type.GetTypeInfo())->funcdef;
-					break;
-				}
-			}
-			if( !calledFunc )
-			{
-				// Look in parameters
-				int paramPos = 0;
-				if( func->objectType )
-					paramPos -= AS_PTR_SIZE;
-				if( func->DoesReturnOnStack() )
-					paramPos -= AS_PTR_SIZE;
-				for( v = 0; v < func->parameterTypes.GetLength(); v++ )
-				{
-					if( var == paramPos )
-					{
-						calledFunc = CastToFuncdefType(func->parameterTypes[v].GetTypeInfo())->funcdef;
-						break;
-					}
-					paramPos -= func->parameterTypes[v].GetSizeOnStackDWords();
-				}
-			}
-			break;
-		}
-		else if( bc == asBC_REFCPY ||
-				 bc == asBC_COPY )
-		{
-			if( offset == AS_PTR_SIZE )
-			{
-				// In this case we know there is only 1 pointer on the stack above
-				return offset + (1 - AS_PTR_SIZE);
-			}
-			else
-			{
-				// Since asBC_REFCPY and asBC_COPY only takes 2 pointers on the stack, we know
-				// the offset that adjusted isn't related to the instruction, hence skip over it 
-				// and find the next function after it
-			}
-		}
-
-		// Keep track of the stack size between the
-		// instruction that needs to be adjusted and the call
-		stackDelta += asBCInfo[bc].stackInc;
-
-		n += asBCTypeSize[asBCInfo[bc].type];
-	}
-
-	asASSERT( calledFunc );
-
-	// Count the number of pointers pushed on the stack above the
-	// current offset, and then adjust the offset accordingly
-	asUINT numPtrs = 0;
-	int currOffset = -stackDelta;
-	if( offset > currOffset && calledFunc->GetObjectType() && !bcAlloc )
-	{
-		currOffset += AS_PTR_SIZE;
-		if( currOffset > 0 )
-			numPtrs++;
-	}
-	if( offset > currOffset && calledFunc->DoesReturnOnStack() )
-	{
-		currOffset += AS_PTR_SIZE;
-		if( currOffset > 0 )
-			numPtrs++;
-	}
-	if (offset > currOffset && calledFunc->IsVariadic())
-		currOffset++;
-	for( asUINT p = 0; p < calledFunc->parameterTypes.GetLength(); p++ )
-	{
-		if( offset <= currOffset ) break;
-
-		if( !calledFunc->parameterTypes[p].IsPrimitive() ||
-			calledFunc->parameterTypes[p].IsReference() )
-		{
-			// objects and references are passed by pointer
-			currOffset += AS_PTR_SIZE;
-			if( currOffset > 0 )
-				numPtrs++;
-
-			// The variable arg ? has an additional 32bit int with the typeid
-			if( calledFunc->parameterTypes[p].IsAnyType() )
-				currOffset += 1;
-		}
-		else
-		{
-			// built-in primitives or enums are passed by value
-			asASSERT( calledFunc->parameterTypes[p].IsPrimitive() );
-			currOffset += calledFunc->parameterTypes[p].GetSizeOnStackDWords();
-		}
-	}
-	if (offset > currOffset && calledFunc->IsVariadic())
-	{
-		asCDataType variadicType = calledFunc->parameterTypes[calledFunc->parameterTypes.GetLength() - 1];
-		for (;;)
-		{
-			if (offset <= currOffset) break;
-
-			if(!variadicType.IsPrimitive() ||
-				variadicType.IsReference())
-			{
-				// objects and references are passed by pointer
-				currOffset += AS_PTR_SIZE;
-				if (currOffset > 0)
-					numPtrs++;
-
-				// The variable arg ? has an additional 32bit int with the typeid
-				if (variadicType.IsAnyType())
-					currOffset += 1;
-			}
-			else
-			{
-				// built-in primitives or enums are passed by value
-				asASSERT(variadicType.IsPrimitive());
-				currOffset += variadicType.GetSizeOnStackDWords();
-			}
-		}
-	}
-
-	// The get offset must match one of the parameter offsets
-	asASSERT( offset == currOffset );
-
-	return offset + numPtrs * (1 - AS_PTR_SIZE);
+	// The arguments are stored in slots of 8 bytes, which is the same on all supported
+	// platforms, so the offsets of the arguments are saved as is
+	UNUSED_VAR(func);
+	UNUSED_VAR(programPos);
+	return offset;
 }
 
 void asCWriter::WriteByteCode(asCScriptFunction *func)
@@ -5245,8 +4885,8 @@ void asCWriter::WriteByteCode(asCScriptFunction *func)
 		if( c == asBC_ALLOC ) // W_PTR_DW_ARG
 		{
 			// Translate the object type
-			asCObjectType *ot = *(asCObjectType**)(tmpBC+1);
-			*(asPWORD*)(tmpBC+1) = FindTypeInfoIdx(ot);
+			asCObjectType *ot = (asCObjectType*)asBC_PTRARG(tmpBC);
+			asBC_PTRARG(tmpBC) = FindTypeInfoIdx(ot);
 
 			// Translate the constructor func id, unless it is 0
 			if( *(int*)&tmpBC[1+AS_PTR_SIZE] != 0 )
@@ -5260,12 +4900,12 @@ void asCWriter::WriteByteCode(asCScriptFunction *func)
 				 c == asBC_OBJTYPE )  // PTR_ARG
 		{
 			// Translate object type pointers into indices
-			*(asPWORD*)(tmpBC+1) = FindTypeInfoIdx(*(asCObjectType**)(tmpBC+1));
+			asBC_PTRARG(tmpBC) = FindTypeInfoIdx((asCObjectType*)asBC_PTRARG(tmpBC));
 		}
 		else if( c == asBC_JitEntry ) // PTR_ARG
 		{
 			// We don't store the JIT argument
-			*(asPWORD*)(tmpBC+1) = 0;
+			asBC_PTRARG(tmpBC) = 0;
 		}
 		else if( c == asBC_TYPEID || // DW_ARG
 			     c == asBC_Cast )    // DW_ARG
@@ -5325,7 +4965,7 @@ void asCWriter::WriteByteCode(asCScriptFunction *func)
 		else if( c == asBC_FuncPtr ) // PTR_ARG
 		{
 			// Translate the function pointer
-			*(asPWORD*)(tmpBC+1) = FindFunctionIndex(*(asCScriptFunction**)(tmpBC+1));
+			asBC_PTRARG(tmpBC) = FindFunctionIndex((asCScriptFunction*)asBC_PTRARG(tmpBC));
 		}
 		else if( c == asBC_CALLBND ) // DW_ARG
 		{
@@ -5350,12 +4990,12 @@ void asCWriter::WriteByteCode(asCScriptFunction *func)
 				 c == asBC_SetG4    )  // PTR_DW_ARG
 		{
 			// Check if the address is a global property or a string constant
-			void *ptr = *(void**)(tmpBC + 1);
+			void *ptr = (void*)asBC_PTRARG(tmpBC);
 			if (engine->varAddressMap.MoveTo(0, ptr))
 			{
 				// Translate global variable pointers into indices
 				// Flag the first bit to signal global property
-				*(asPWORD*)(tmpBC + 1) = (asPWORD(FindGlobalPropPtrIndex(*(void**)(tmpBC + 1))) << 1) + 1;
+				asBC_PTRARG(tmpBC) = (asPWORD(FindGlobalPropPtrIndex((void*)asBC_PTRARG(tmpBC))) << 1) + 1;
 			}
 			else
 			{
@@ -5364,7 +5004,7 @@ void asCWriter::WriteByteCode(asCScriptFunction *func)
 
 				// Translate string constants into indices
 				// Leave the first bit clear to signal string constant
-				*(asPWORD*)(tmpBC + 1) = asPWORD(FindStringConstantIndex(*(void**)(tmpBC + 1))) << 1;
+				asBC_PTRARG(tmpBC) = asPWORD(FindStringConstantIndex((void*)asBC_PTRARG(tmpBC))) << 1;
 			}
 		}
 		else if( c == asBC_JMP    ||	// DW_ARG
@@ -5411,8 +5051,8 @@ void asCWriter::WriteByteCode(asCScriptFunction *func)
 		else if( c == asBC_FREE ) // wW_PTR_ARG
 		{
 			// Translate object type pointers into indices
-			asCObjectType *ot = *(asCObjectType**)(tmpBC+1);
-			*(asPWORD*)(tmpBC+1) = FindTypeInfoIdx(ot);
+			asCObjectType *ot = (asCObjectType*)asBC_PTRARG(tmpBC);
+			asBC_PTRARG(tmpBC) = FindTypeInfoIdx(ot);
 
 			// Pop and destroy the list adjuster helper that was created with asBC_AllocMem
 			if( ot && (ot->flags & asOBJ_LIST_PATTERN) )
@@ -5622,7 +5262,7 @@ void asCWriter::WriteByteCode(asCScriptFunction *func)
 				WriteData(&b, 1);
 
 				// Write the argument
-				asQWORD qw = *(asQWORD*)&tmpBC[1];
+				asQWORD qw = asBC_QWORDARG(tmpBC);
 				WriteEncodedInt64(qw);
 			}
 			break;
@@ -5633,7 +5273,7 @@ void asCWriter::WriteByteCode(asCScriptFunction *func)
 				WriteData(&b, 1);
 
 				// Write the argument
-				asQWORD qw = *(asQWORD*)&tmpBC[1];
+				asQWORD qw = asBC_QWORDARG(tmpBC);
 				WriteEncodedInt64(qw);
 
 				// Write the second argument
@@ -5652,7 +5292,7 @@ void asCWriter::WriteByteCode(asCScriptFunction *func)
 				WriteEncodedInt64(w);
 
 				// Write the second argument
-				asQWORD qw = *(asQWORD*)&tmpBC[1];
+				asQWORD qw = asBC_QWORDARG(tmpBC);
 				WriteEncodedInt64(qw);
 
 				// Write the third argument
@@ -5672,7 +5312,7 @@ void asCWriter::WriteByteCode(asCScriptFunction *func)
 				WriteEncodedInt64(w);
 
 				// Write the argument
-				asQWORD qw = *(asQWORD*)&tmpBC[1];
+				asQWORD qw = asBC_QWORDARG(tmpBC);
 				WriteEncodedInt64(qw);
 			}
 			break;
@@ -5772,11 +5412,8 @@ int asCWriter::SListAdjuster::AdjustOffset(int offset, asCObjectType *listPatter
 			if( repeatCount > 0 )
 			{
 				// Was any value skipped?
-				asUINT size;
-				if( dt.IsObjectHandle() || (dt.GetTypeInfo() && (dt.GetTypeInfo()->flags & asOBJ_REF)) )
-					size = AS_PTR_SIZE*4;
-				else
-					size = dt.GetSizeInMemoryBytes();
+				asUINT size = dt.GetSizeInListBuffer();
+				asUINT alignment = dt.GetAlignment();
 
 				int count = 0;
 				while( nextOffset <= offset )
@@ -5784,9 +5421,8 @@ int asCWriter::SListAdjuster::AdjustOffset(int offset, asCObjectType *listPatter
 					count++;
 					nextOffset += size;
 
-					// Align the offset on 4 byte boundaries
-					if( size >= 4 && (nextOffset & 0x3) )
-						nextOffset += 4 - (nextOffset & 0x3);
+					// The values are aligned to their natural alignment
+					nextOffset = alignOffset(nextOffset, alignment);
 				}
 
 				if( --count > 0 )
@@ -5857,6 +5493,17 @@ void asCWriter::SListAdjuster::SetNextType(int typeId)
 	// Make sure the list is expecting a type at this location
 	asASSERT( patternNode->type == asLPT_TYPE &&
 	          reinterpret_cast<asSListPatternDataTypeNode*>(patternNode)->dataType.GetTokenType() == ttQuestion );
+
+	if( typeId == 0 )
+	{
+		// A null handle is not written to the buffer, as the buffer is already cleared,
+		// so there will be no adjustment for the value. Move to the next element
+		if( repeatCount > 0 )
+			repeatCount--;
+		if( repeatCount == 0 )
+			patternNode = patternNode->next;
+		return;
+	}
 
 	// Inform the type id for the next adjustment
 	nextTypeId = typeId;

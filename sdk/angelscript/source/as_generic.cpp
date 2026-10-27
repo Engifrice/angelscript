@@ -56,6 +56,7 @@ asCGeneric::asCGeneric(asCScriptEngine *engine, asCScriptFunction *sysFunction, 
 	
 	objectRegister = 0;
 	returnVal = 0;
+	returnValueConstructed = false;
 }
 
 // internal
@@ -117,7 +118,7 @@ asBYTE asCGeneric::GetArgByte(asUINT arg)
 	// Determine the position of the argument
 	int offset = 0;
 	for( asUINT n = 0; n < arg; n++ )
-		offset += sysFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += sysFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Get the value
 	return *(asBYTE*)&stackPointer[offset];
@@ -140,7 +141,7 @@ asWORD asCGeneric::GetArgWord(asUINT arg)
 	// Determine the position of the argument
 	int offset = 0;
 	for( asUINT n = 0; n < arg; n++ )
-		offset += sysFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += sysFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Get the value
 	return *(asWORD*)&stackPointer[offset];
@@ -163,7 +164,7 @@ asDWORD asCGeneric::GetArgDWord(asUINT arg)
 	// Determine the position of the argument
 	int offset = 0;
 	for( asUINT n = 0; n < arg; n++ )
-		offset += sysFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += sysFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Get the value
 	return *(asDWORD*)&stackPointer[offset];
@@ -186,7 +187,7 @@ asQWORD asCGeneric::GetArgQWord(asUINT arg)
 	// Determine the position of the argument
 	int offset = 0;
 	for( asUINT n = 0; n < arg; n++ )
-		offset += sysFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += sysFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Get the value
 	return *(asQWORD*)(&stackPointer[offset]);
@@ -209,7 +210,7 @@ float asCGeneric::GetArgFloat(asUINT arg)
 	// Determine the position of the argument
 	int offset = 0;
 	for( asUINT n = 0; n < arg; n++ )
-		offset += sysFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += sysFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Get the value
 	return *(float*)(&stackPointer[offset]);
@@ -232,7 +233,7 @@ double asCGeneric::GetArgDouble(asUINT arg)
 	// Determine the position of the argument
 	int offset = 0;
 	for( asUINT n = 0; n < arg; n++ )
-		offset += sysFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += sysFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Get the value
 	return *(double*)(&stackPointer[offset]);
@@ -252,7 +253,7 @@ void *asCGeneric::GetArgAddress(asUINT arg)
 	// Determine the position of the argument
 	int offset = 0;
 	for( asUINT n = 0; n < arg; n++ )
-		offset += sysFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += sysFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Get the value
 	return (void*)*(asPWORD*)(&stackPointer[offset]);
@@ -272,7 +273,7 @@ void *asCGeneric::GetArgObject(asUINT arg)
 	// Determine the position of the argument
 	int offset = 0;
 	for( asUINT n = 0; n < arg; n++ )
-		offset += sysFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += sysFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Get the value
 	return *(void**)(&stackPointer[offset]);
@@ -287,7 +288,7 @@ void *asCGeneric::GetAddressOfArg(asUINT arg)
 	// Determine the position of the argument
 	int offset = 0;
 	for( asUINT n = 0; n < arg; n++ )
-		offset += sysFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += sysFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// For object variables it's necessary to dereference the pointer to get the address of the value
 	if( !sysFunction->parameterTypes[arg].IsReference() && 
@@ -318,7 +319,7 @@ int asCGeneric::GetArgTypeId(asUINT arg, asDWORD *flags) const
 	{
 		int offset = 0;
 		for( asUINT n = 0; n < arg; n++ )
-			offset += sysFunction->parameterTypes[n].GetSizeOnStackDWords();
+			offset += sysFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 		// Skip the actual value to get to the type id
 		offset += AS_PTR_SIZE;
@@ -479,6 +480,7 @@ int asCGeneric::SetReturnObject(void *obj)
 		// or the default constructor followed by the assignment operator
 		void *mem = (void*)*(asPWORD*)&stackPointer[-AS_PTR_SIZE];
 		engine->ConstructScriptObjectCopy(mem, obj, CastToObjectType(dt->GetTypeInfo()));
+		returnValueConstructed = true;
 		return 0;
 	}
 
@@ -513,6 +515,9 @@ void *asCGeneric::GetAddressOfReturnLocation()
 	{
 		if( sysFunction->DoesReturnOnStack() )
 		{
+			// The function is expected to construct the value in this location
+			returnValueConstructed = true;
+
 			// The memory is already preallocated on the stack,
 			// and the pointer to the location is found before the first arg
 			return (void*)*(asPWORD*)&stackPointer[-AS_PTR_SIZE];
@@ -708,9 +713,12 @@ void* asCGenericVariadic::GetAddressOfReturnLocation()
 	{
 		if (sysFunction->DoesReturnOnStack())
 		{
+			// The function is expected to construct the value in this location
+			returnValueConstructed = true;
+
 			// The memory is already preallocated on the stack,
 			// and the pointer to the location is found before the first arg
-			return (void*)*(asPWORD*)&stackPointer[-(AS_PTR_SIZE + 1)];
+			return (void*)*(asPWORD*)&stackPointer[-(AS_PTR_SIZE + AS_ARG_SLOT_DWORDS)];
 		}
 
 		// Reference types store the handle in the objectReference
@@ -753,8 +761,9 @@ int asCGenericVariadic::SetReturnObject(void* obj)
 		// If function returns object by value the memory is already allocated.
 		// Here we should just initialize that memory by calling the copy constructor
 		// or the default constructor followed by the assignment operator
-		void* mem = (void*)*(asPWORD*)&stackPointer[-(AS_PTR_SIZE + 1)];
+		void* mem = (void*)*(asPWORD*)&stackPointer[-(AS_PTR_SIZE + AS_ARG_SLOT_DWORDS)];
 		engine->ConstructScriptObjectCopy(mem, obj, CastToObjectType(dt->GetTypeInfo()));
+		returnValueConstructed = true;
 		return 0;
 	}
 
@@ -782,10 +791,10 @@ int asCGenericVariadic::GetArgOffsetOnStack(asUINT arg) const
 		{
 			// If the argument index is beyond the last fixed parameter, use the last parameter type for variadic arguments
 			asUINT idx = sysFunction->parameterTypes.GetLength() - 1;
-			offset += sysFunction->parameterTypes[idx].GetSizeOnStackDWords();
+			offset += sysFunction->parameterTypes[idx].GetSizeOfArgSlotDWords();
 		}
 		else
-			offset += sysFunction->parameterTypes[n].GetSizeOnStackDWords();
+			offset += sysFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 	}
 
 	return offset;

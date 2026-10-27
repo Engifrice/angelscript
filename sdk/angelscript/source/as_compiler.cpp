@@ -366,16 +366,12 @@ int asCCompiler::CompileFactory(asCBuilder *in_builder, asCScriptCode *in_script
 		}
 		else
 		{
+			// Each argument takes up a full slot, even if the value is smaller
+			offset -= outFunc->parameterTypes[a].GetSizeOfArgSlotDWords();
 			if( outFunc->parameterTypes[a].GetSizeOnStackDWords() == 2 )
-			{
-				offset -= 2;
 				byteCode.InstrSHORT(asBC_PshV8, short(-offset));
-			}
 			else
-			{
-				offset -= 1;
 				byteCode.InstrSHORT(asBC_PshV4, short(-offset));
-			}
 		}
 	}
 
@@ -439,7 +435,7 @@ void asCCompiler::FinalizeFunction()
 		}
 
 		// Move to next parameter
-		stackPos -= type.GetSizeOnStackDWords();
+		stackPos -= type.GetSizeOfArgSlotDWords();
 	}
 	// Add the return type too at the end if it returns on the stack, which is when it uses a hidden parameter
 	if (outFunc->DoesReturnOnStack())
@@ -449,6 +445,12 @@ void asCCompiler::FinalizeFunction()
 		returnType.MakeReference(true);
 		outFunc->AddVariable("", returnType, outFunc->objectType ? -AS_PTR_SIZE : 0, false);
 	}
+
+	// The values pushed on the stack must be aligned to 8 bytes, so the space for the local variables is rounded up
+	outFunc->scriptData->variableSpace = alignOffset(outFunc->scriptData->variableSpace, AS_ARG_SLOT_DWORDS);
+
+	// Determine the alignment the frame pointer needs for the local variables to be aligned
+	outFunc->CalculateFrameAlignment();
 
 	// Finalize the bytecode
 	byteCode.Finalize(tempVariableOffsets);
@@ -464,7 +466,7 @@ void asCCompiler::FinalizeFunction()
 	outFunc->scriptData->byteCode.SetLength(byteCode.GetSize());
 	byteCode.Output(outFunc->scriptData->byteCode.AddressOf());
 	outFunc->AddReferences();
-	outFunc->scriptData->stackNeeded = byteCode.largestStackUsed + outFunc->scriptData->variableSpace;
+	outFunc->scriptData->stackNeeded = byteCode.largestStackUsed + outFunc->scriptData->variableSpace + outFunc->GetFrameRealignmentDWords();
 	outFunc->scriptData->lineNumbers = byteCode.lineNumbers;
 
 	// Extract the script section indexes too if there are any entries that are different from the function's script section
@@ -572,7 +574,7 @@ int asCCompiler::SetupParametersAndReturnVariable(asCArray<asCString> &parameter
 			vs.DeclareVariable("", type, stackPos, onHeap);
 
 		// Move to next parameter
-		stackPos -= type.GetSizeOnStackDWords();
+		stackPos -= type.GetSizeOfArgSlotDWords();
 	}
 
 	for( n = asUINT(vs.variables.GetLength()); n-- > 0; )
@@ -2365,7 +2367,7 @@ void asCCompiler::MoveArgsToStack(int funcId, asCByteCode *bc, asCArray<asCExprC
 		offset += AS_PTR_SIZE;
 
 	if (descr->IsVariadic())
-		offset += 1;
+		offset += AS_ARG_SLOT_DWORDS; // The argument count
 
 #ifdef AS_DEBUG
 	// If the function being called is the opAssign or copy constructor for the same type
@@ -2472,7 +2474,7 @@ void asCCompiler::MoveArgsToStack(int funcId, asCByteCode *bc, asCArray<asCExprC
 			args[n]->type.isTemporary = false;
 		}
 
-		offset += descr->parameterTypes[realParamIdx].GetSizeOnStackDWords();
+		offset += descr->parameterTypes[realParamIdx].GetSizeOfArgSlotDWords();
 	}
 }
 
@@ -4100,8 +4102,7 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 		asSListPatternNode *nextNode = patternNode;
 
 		// Align the buffer size to 4 bytes in case previous value was smaller than 4 bytes
-		if( bufferSize & 0x3 )
-			bufferSize += 4 - (bufferSize & 0x3);
+		bufferSize = alignOffset(bufferSize, 4);
 
 		// The first dword will hold the number of elements in the list
 		asDWORD currSize = bufferSize;
@@ -4203,9 +4204,8 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 					dt.MakeReadOnly(false);
 					dt.MakeReference(false);
 
-					// Values on the list must be aligned to 32bit boundaries, except if the type is smaller than 32bit.
-					if( bufferSize & 0x3 )
-						bufferSize += 4 - (bufferSize & 0x3);
+					// The type id is aligned to 4 bytes, and the value that follows it is aligned to its own alignment
+					bufferSize = alignOffset(bufferSize, 4);
 
 					// When value assignment for reference types us disabled, make sure all ref types are passed in as handles
 					if (engine->ep.disallowValueAssignForRefType && dt.SupportHandles())
@@ -4254,15 +4254,8 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 				}
 			}
 
-			// Determine size of the element
-			if( dt.IsPrimitive() || (!dt.IsNullHandle() && (dt.GetTypeInfo()->flags & asOBJ_VALUE)) )
-				size = dt.GetSizeInMemoryBytes();
-			else
-				size = AS_PTR_SIZE*4;
-
-			// Values on the list must be aligned to 32bit boundaries, except if the type is smaller than 32bit.
-			if( size >= 4 && (bufferSize & 0x3) )
-				bufferSize += 4 - (bufferSize & 0x3);
+			// Values on the list are aligned to their natural alignment
+			bufferSize = alignOffset(bufferSize, dt.GetAlignment());
 
 			// Compile the lvalue
 			lctx.bc.InstrSHORT_DW(asBC_PshListElmnt, bufferVar, bufferSize);
@@ -4361,9 +4354,8 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 				// There is no specific value so we need to fill it with a default value
 				if( dt.GetTokenType() == ttQuestion )
 				{
-					// Values on the list must be aligned to 32bit boundaries, except if the type is smaller than 32bit.
-					if( bufferSize & 0x3 )
-						bufferSize += 4 - (bufferSize & 0x3);
+					// The type id is aligned to 4 bytes
+					bufferSize = alignOffset(bufferSize, 4);
 
 					// Place the type id for a null handle in the buffer
 					bcInit.InstrSHORT_DW_DW(asBC_SetListType, bufferVar, bufferSize, 0);
@@ -4387,9 +4379,8 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 					}
 					else if( func )
 					{
-						// Values on the list must be aligned to 32bit boundaries, except if the type is smaller than 32bit.
-						if( bufferSize & 0x3 )
-							bufferSize += 4 - (bufferSize & 0x3);
+						// Values on the list are aligned to their natural alignment
+						bufferSize = alignOffset(bufferSize, dt.GetAlignment());
 
 						// Call the constructor as a normal function
 						bcInit.InstrSHORT_DW(asBC_PshListElmnt, bufferVar, bufferSize);
@@ -4416,9 +4407,8 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 						asCExprContext rctx(engine);
 						PerformFunctionCall(func, &rctx, false, 0, CastToObjectType(dt.GetTypeInfo()));
 
-						// Values on the list must be aligned to 32bit boundaries, except if the type is smaller than 32bit.
-						if( bufferSize & 0x3 )
-							bufferSize += 4 - (bufferSize & 0x3);
+						// Values on the list are aligned to their natural alignment
+						bufferSize = alignOffset(bufferSize, dt.GetAlignment());
 
 						asCExprContext lctx(engine);
 						lctx.bc.InstrSHORT_DW(asBC_PshListElmnt, bufferVar, bufferSize);
@@ -4446,12 +4436,12 @@ int asCCompiler::CompileInitListElement(asSListPatternNode *&patternNode, asCScr
 
 		if( !isEmpty )
 		{
-			// Determine size of the element
-			if( dt.IsPrimitive() || (!dt.IsNullHandle() && (dt.GetTypeInfo()->flags & asOBJ_VALUE)) )
-				size = dt.GetSizeInMemoryBytes();
-			else
-				size = AS_PTR_SIZE*4;
-			asASSERT( size <= 4 || (size & 0x3) == 0 );
+			// Align the element in case no code was generated for it above, e.g.
+			// for default values that are just zeroes. Otherwise this does nothing
+			bufferSize = alignOffset(bufferSize, dt.GetAlignment());
+
+			size = dt.GetSizeInListBuffer();
+			asASSERT( (size % dt.GetAlignment()) == 0 );
 
 			bufferSize += size;
 		}
@@ -6595,9 +6585,24 @@ int asCCompiler::AllocateVariable(const asCDataType &type, bool isTemporary, boo
 	return offset;
 }
 
+// Returns the size in dwords that the variable in the slot takes up on the stack
+int asCCompiler::GetVariableSizeDWords(int varIndex)
+{
+	return variableAllocations[varIndex].GetSizeOfLocalDWords(variableIsOnHeap[varIndex]);
+}
+
+// Returns the alignment in dwords of the variable in the slot
+int asCCompiler::GetVariableAlignmentDWords(int varIndex)
+{
+	return variableAllocations[varIndex].GetAlignmentOfLocalDWords(variableIsOnHeap[varIndex]);
+}
+
 int asCCompiler::GetVariableOffset(int varIndex)
 {
-	// Return offset to the last dword on the stack
+	// Return offset to the last dword on the stack. The address of the variable
+	// is the frame pointer minus this offset, so the offset is aligned to the
+	// alignment of the variable for the variable to be properly aligned in memory.
+	// The frame pointer is aligned to the largest alignment of all variables.
 
 	// Start at 1 as offset 0 is reserved for the this pointer (or first argument for global functions)
 	int varOffset = 1;
@@ -6605,22 +6610,15 @@ int asCCompiler::GetVariableOffset(int varIndex)
 	// Skip lower variables
 	for( int n = 0; n < varIndex; n++ )
 	{
-		if( !variableIsOnHeap[n] && variableAllocations[n].IsObject() )
-			varOffset += variableAllocations[n].GetSizeInMemoryDWords();
-		else
-			varOffset += variableAllocations[n].GetSizeOnStackDWords();
+		int size = GetVariableSizeDWords(n);
+		varOffset = alignOffset(varOffset + size - 1, GetVariableAlignmentDWords(n)) + 1;
 	}
 
 	if( varIndex < (int)variableAllocations.GetLength() )
 	{
 		// For variables larger than 1 dword the returned offset should be to the last dword
-		int size;
-		if( !variableIsOnHeap[varIndex] && variableAllocations[varIndex].IsObject() )
-			size = variableAllocations[varIndex].GetSizeInMemoryDWords();
-		else
-			size = variableAllocations[varIndex].GetSizeOnStackDWords();
-		if( size > 1 )
-			varOffset += size-1;
+		int size = GetVariableSizeDWords(varIndex);
+		varOffset = alignOffset(varOffset + size - 1, GetVariableAlignmentDWords(varIndex));
 	}
 
 	return varOffset;
@@ -6632,10 +6630,8 @@ int asCCompiler::GetVariableSlot(int offset)
 	int varOffset = 1;
 	for( asUINT n = 0; n < variableAllocations.GetLength(); n++ )
 	{
-		if( !variableIsOnHeap[n] && variableAllocations[n].IsObject() )
-			varOffset += -1 + variableAllocations[n].GetSizeInMemoryDWords();
-		else
-			varOffset += -1 + variableAllocations[n].GetSizeOnStackDWords();
+		// Same layout as in GetVariableOffset
+		varOffset = alignOffset(varOffset + GetVariableSizeDWords(n) - 1, GetVariableAlignmentDWords(n));
 
 		if( varOffset == offset )
 			return n;
@@ -8540,7 +8536,7 @@ asUINT asCCompiler::ImplicitConvObjectValue(asCExprContext *ctx, const asCDataTy
 							{
 								int offset = 0;
 								asCScriptFunction *descr = builder->GetFunctionDescription(funcs[0]);
-								offset = descr->parameterTypes[0].GetSizeOnStackDWords();
+								offset = descr->parameterTypes[0].GetSizeOfArgSlotDWords();
 
 								e.bc.InstrWORD(asBC_GETREF, (asWORD)offset);
 							}
@@ -8659,7 +8655,7 @@ asUINT asCCompiler::ImplicitConvObjectToObject(asCExprContext *ctx, const asCDat
 				{
 					int offset = 0;
 					asCScriptFunction *descr = builder->GetFunctionDescription(funcs[0]);
-					offset = descr->parameterTypes[0].GetSizeOnStackDWords();
+					offset = descr->parameterTypes[0].GetSizeOfArgSlotDWords();
 
 					e.bc.InstrWORD(asBC_GETREF, (asWORD)offset);
 				}
@@ -9190,7 +9186,7 @@ asUINT asCCompiler::ImplicitConvPrimitiveToObject(asCExprContext *ctx, const asC
 			int offset = 0;
 			asCScriptFunction *descr = builder->GetFunctionDescription(funcs[0]);
 			for( asUINT n = 0; n < args.GetLength(); n++ )
-				offset += descr->parameterTypes[n].GetSizeOnStackDWords();
+				offset += descr->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 			ctx->bc.InstrWORD(asBC_GETREF, (asWORD)offset);
 		}
@@ -9222,6 +9218,18 @@ asUINT asCCompiler::ImplicitConvPrimitiveToObject(asCExprContext *ctx, const asC
 	}
 
 	return cost;
+}
+
+// Checks if a floating-point value converted from a 64-bit integer holds it exactly. The range is
+// checked before converting back, as converting an out of range floating-point value is undefined
+static bool IsExactInt64(double value, asINT64 original)
+{
+	return value >= -9223372036854775808.0 && value < 9223372036854775808.0 && asINT64(value) == original;
+}
+
+static bool IsExactUInt64(double value, asQWORD original)
+{
+	return value >= 0 && value < 18446744073709551616.0 && asQWORD(value) == original;
 }
 
 void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCDataType &to, asCScriptNode *node, EImplicitConv convType)
@@ -9744,7 +9752,8 @@ void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCData
 				ic = (int)from->type.GetConstantDW();
 			float fc = float(ic);
 
-			if( int(fc) != ic )
+			// Compare as double, which holds both values exactly
+			if( double(fc) != double(ic) )
 			{
 				if( convType != asIC_EXPLICIT_VAL_CAST && node ) Warning(TXT_NOT_EXACT, node);
 			}
@@ -9754,7 +9763,7 @@ void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCData
 		else if( from->type.dataType.IsIntegerType() && from->type.dataType.GetSizeInMemoryDWords() == 2 )
 		{
 			float fc = float(asINT64(from->type.GetConstantQW()));
-			if( asINT64(fc) != asINT64(from->type.GetConstantQW()) )
+			if( !IsExactInt64(fc, asINT64(from->type.GetConstantQW())) )
 			{
 				if( convType != asIC_EXPLICIT_VAL_CAST && node ) Warning(TXT_NOT_EXACT, node);
 			}
@@ -9773,7 +9782,8 @@ void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCData
 				uic = from->type.GetConstantDW();
 			float fc = float(uic);
 
-			if( (unsigned int)(fc) != uic )
+			// Compare as double, which holds both values exactly
+			if( double(fc) != double(uic) )
 			{
 				if( convType != asIC_EXPLICIT_VAL_CAST && node ) Warning(TXT_NOT_EXACT, node);
 			}
@@ -9782,9 +9792,9 @@ void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCData
 		}
 		else if( from->type.dataType.IsUnsignedType() && from->type.dataType.GetSizeInMemoryDWords() == 2 )
 		{
-			float fc = float((asINT64)from->type.GetConstantQW());
+			float fc = float(from->type.GetConstantQW());
 
-			if( asQWORD(fc) != from->type.GetConstantQW())
+			if( !IsExactUInt64(fc, from->type.GetConstantQW()) )
 			{
 				if( convType != asIC_EXPLICIT_VAL_CAST && node ) Warning(TXT_NOT_EXACT, node);
 			}
@@ -9824,7 +9834,7 @@ void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCData
 		{
 			double fc = double(asINT64(from->type.GetConstantQW()));
 
-			if( asINT64(fc) != asINT64(from->type.GetConstantQW()) )
+			if( !IsExactInt64(fc, asINT64(from->type.GetConstantQW())) )
 			{
 				if( convType != asIC_EXPLICIT_VAL_CAST && node ) Warning(TXT_NOT_EXACT, node);
 			}
@@ -9852,9 +9862,9 @@ void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCData
 		}
 		else if( from->type.dataType.IsUnsignedType() && from->type.dataType.GetSizeInMemoryDWords() == 2 )
 		{
-			double fc = double((asINT64)from->type.GetConstantQW());
+			double fc = double(from->type.GetConstantQW());
 
-			if( asQWORD(fc) != from->type.GetConstantQW())
+			if( !IsExactUInt64(fc, from->type.GetConstantQW()) )
 			{
 				if( convType != asIC_EXPLICIT_VAL_CAST && node ) Warning(TXT_NOT_EXACT, node);
 			}
@@ -13773,14 +13783,16 @@ int asCCompiler::CompileExpressionPreOp(asCScriptNode *node, asCExprContext *ctx
 			{
 				if (ctx->type.dataType.IsIntegerType())
 				{
+					// The 32 and 64 bit values are negated as unsigned values, which gives the same
+					// result without overflow when negating the smallest negative value
 					if (ctx->type.dataType.GetSizeInMemoryBytes() == 4)
-						ctx->type.SetConstantDW(-(int)ctx->type.GetConstantDW());
+						ctx->type.SetConstantDW(asDWORD(0) - ctx->type.GetConstantDW());
 					else if (ctx->type.dataType.GetSizeInMemoryBytes() == 2)
 						ctx->type.SetConstantW(-(asINT16)ctx->type.GetConstantW());
 					else if (ctx->type.dataType.GetSizeInMemoryBytes() == 1)
 						ctx->type.SetConstantB(-(asINT8)ctx->type.GetConstantB());
 					else if (ctx->type.dataType.GetSizeInMemoryBytes() == 8)
-						ctx->type.SetConstantQW(-(asINT64)ctx->type.GetConstantQW());
+						ctx->type.SetConstantQW(asQWORD(0) - ctx->type.GetConstantQW());
 				}
 				else if( ctx->type.dataType.IsFloatType() )
 					ctx->type.SetConstantF(-ctx->type.GetConstantF());
@@ -15856,7 +15868,7 @@ int asCCompiler::MakeFunctionCall(asCExprContext *ctx, int funcId, asCObjectType
 		{
 			int offset = 0;
 			for (n = 0; n < args.GetLength(); n++)
-				offset += descr->parameterTypes[n].GetSizeOnStackDWords();
+				offset += descr->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 			ctx->bc.InstrWORD(asBC_GETREF, (asWORD)offset);
 		}
@@ -17807,13 +17819,13 @@ void asCCompiler::PerformFunctionCall(int funcId, asCExprContext *ctx, bool isCo
 		{
 			// Compute the additional space used for the variadic args
 			asCDataType variadicType = descr->parameterTypes[descr->parameterTypes.GetLength() - 1];
-			int sizeOfVariadicArg = variadicType.GetSizeOnStackDWords();
+			int sizeOfVariadicArg = variadicType.GetSizeOfArgSlotDWords();
 
 			// GetSpaceNeededForArguments already added one variadic arg for the ..., but there might not actually be any
 			argSize -= sizeOfVariadicArg;
 
-			// Add 1 for the arg count
-			argSize++;
+			// Add the slot for the arg count
+			argSize += AS_ARG_SLOT_DWORDS;
 
 			// Add the actual space used for the variadic args
 			argSize += sizeOfVariadicArg * (args->GetLength() - descr->parameterTypes.GetLength() + 1);

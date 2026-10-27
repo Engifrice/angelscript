@@ -442,7 +442,8 @@
 		#pragma warning( disable : 4786 )
 	#endif
 
-	#ifdef _M_X64
+	// The method pointer starts with the function pointer, so the offsets depend on its size
+	#if defined(_M_X64) || defined(_M_ARM64)
 		#define MULTI_BASE_OFFSET(x) (*((const asDWORD*)(&x)+2))
 		#define VIRTUAL_BASE_OFFSET(x) (*((const asDWORD*)(&x)+4))
 	#else
@@ -1388,14 +1389,9 @@
 	#define AS_USE_DOUBLE_AS_FLOAT	// use 32bit floats instead of doubles
 #endif
 
-// If there are no current support for native calling
-// conventions, then compile with AS_MAX_PORTABILITY
-#if (!defined(AS_X86) && !defined(AS_SH4) && !defined(AS_MIPS) && !defined(AS_PPC) && \
-	 !defined(AS_PPC_64) && !defined(AS_XENON) && !defined(AS_X64_GCC) && !defined(AS_X64_MSVC) && \
-	 !defined(AS_ARM) && !defined(AS_ARM64) && !defined(AS_X64_MINGW) && !defined(AS_RISCV64) && !defined(AS_E2K))
-	#ifndef AS_MAX_PORTABILITY
-		#define AS_MAX_PORTABILITY
-	#endif
+// Native calling conventions are not supported, only the generic calling convention
+#ifndef AS_MAX_PORTABILITY
+	#define AS_MAX_PORTABILITY
 #endif
 
 // If the platform doesn't support atomic instructions we can't allow
@@ -1453,6 +1449,8 @@
 
 #include "../include/angelscript.h"
 #include "as_memory.h"
+
+static_assert(sizeof(void*) == 8 && AS_PTR_SIZE == 2, "AngelScript only supports 64-bit platforms");
 
 #ifdef AS_USE_NAMESPACE
 using namespace AngelScript;

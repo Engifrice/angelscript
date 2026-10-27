@@ -455,6 +455,8 @@ protected:
 	int AllocateVariableNotIn(const asCDataType &type, bool isTemporary, bool forceOnHeap, asCExprContext *ctx);
 	int GetVariableOffset(int varIndex);
 	int GetVariableSlot(int varOffset);
+	int GetVariableSizeDWords(int varIndex);
+	int GetVariableAlignmentDWords(int varIndex);
 	void DeallocateVariable(int pos);
 	void ReleaseTemporaryVariable(asCExprValue &t, asCByteCode *bc);
 	void ReleaseTemporaryVariable(int offset, asCByteCode *bc);

@@ -376,7 +376,7 @@ bool asCParser::ParseTemplateDeclTypeList(asCScriptNode* node, bool required)
 	// End with '>'
 	// Accept >> and >>> tokens too. But then force the tokenizer to move
 	// only 1 character ahead (thus splitting the token in two).
-	if (script->code[t.pos] != '>')
+	if (t.pos >= script->codeLength || script->code[t.pos] != '>')
 	{
 		if (required)
 		{
@@ -621,7 +621,7 @@ bool asCParser::ParseTemplTypeList(asCScriptNode *node, bool required)
 	// End with '>'
 	// Accept >> and >>> tokens too. But then force the tokenizer to move
 	// only 1 character ahead (thus splitting the token in two).
-	if (script->code[t.pos] != '>')
+	if (t.pos >= script->codeLength || script->code[t.pos] != '>')
 	{
 		if (required)
 		{
@@ -1512,7 +1512,8 @@ bool asCParser::IsTemplateTypeList(sToken start, sToken *after)
 
 	// Accept >> and >>> tokens too. But then force the tokenizer to move
 	// only 1 character ahead (thus splitting the token in two).
-	if (script->code[t1.pos] != '>')
+	// The end token is positioned after the last character, which must not be read.
+	if (t1.pos >= script->codeLength || script->code[t1.pos] != '>')
 		isTemplateTypeList = false;
 
 	if (after)

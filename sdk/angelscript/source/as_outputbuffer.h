@@ -58,7 +58,8 @@ public:
 	~asCOutputBuffer ();
 	void Clear();
 	void Callback(asSMessageInfo *msg);
-	static void CDeclCallback(asSMessageInfo* msg, asCOutputBuffer* buf) { buf->Callback(msg); }
+	// The engine calls the callback through a pointer to this exact type, so the parameters must be void pointers
+	static void CDeclCallback(void* msg, void* buf) { static_cast<asCOutputBuffer*>(buf)->Callback(static_cast<asSMessageInfo*>(msg)); }
 	void Append(asCOutputBuffer &in);
 	void SendToCallback(asCScriptEngine *engine, asSSystemFunctionInterface *func, void *obj);
 

@@ -126,11 +126,13 @@ public:
 	asCTypeInfo       *GetTypeInfo() const { return typeInfo; }
 
 	int  GetSizeOnStackDWords()  const;
+	int  GetSizeOfArgSlotDWords() const;
+	int  GetSizeOfLocalDWords(bool onHeap) const;
+	int  GetAlignmentOfLocalDWords(bool onHeap) const;
 	int  GetSizeInMemoryBytes()  const;
 	int  GetSizeInMemoryDWords() const;
-#ifdef WIP_16BYTE_ALIGN
 	int  GetAlignment()          const;
-#endif
+	int  GetSizeInListBuffer()   const;
 
 	void SetTokenType(eTokenType tt)         {tokenType = tt;}
 	void SetTypeInfo(asCTypeInfo *ti)       {typeInfo = ti;}

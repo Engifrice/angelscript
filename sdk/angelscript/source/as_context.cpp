@@ -301,11 +301,7 @@ void asCContext::DetachEngine()
 	{
 		if( m_stackBlocks[n] )
 		{
-#ifndef WIP_16BYTE_ALIGN
-			asDELETEARRAY(m_stackBlocks[n]);
-#else
 			asDELETEARRAYALIGNED(m_stackBlocks[n]);
-#endif
 		}
 	}
 	m_stackBlocks.SetLength(0);
@@ -774,8 +770,8 @@ int asCContext::Prepare(asIScriptFunction *func)
 		else
 			m_returnValueSize = 0;
 
-		// Determine the minimum stack size needed
-		int stackSize = m_argumentsSize + m_returnValueSize;
+		// Determine the minimum stack size needed, including padding to align the return value and the frame
+		int stackSize = m_argumentsSize + m_returnValueSize + 2*AS_MAX_TYPE_ALIGNMENT/4;
 		if( m_currentFunction->scriptData )
 			stackSize += m_currentFunction->scriptData->stackNeeded;
 
@@ -801,8 +797,17 @@ int asCContext::Prepare(asIScriptFunction *func)
 	m_status = asEXECUTION_PREPARED;
 	m_regs.programPointer = 0;
 
-	// Reserve space for the arguments and return value
-	m_regs.stackFramePointer = m_regs.stackPointer - m_argumentsSize - m_returnValueSize;
+	// Reserve space for the arguments and return value. The return value is placed above the arguments,
+	// aligned to the alignment of the type. The frame pointer is aligned to what the function needs for
+	// its local variables, so the arguments don't have to be moved when the function is executed
+	asDWORD *returnValue = m_regs.stackPointer - m_returnValueSize;
+	if( m_returnValueSize )
+	{
+		asUINT returnAlignment = m_currentFunction->returnType.GetAlignment();
+		returnValue = (asDWORD*)(asPWORD(returnValue) & ~asPWORD(returnAlignment - 1));
+	}
+	asUINT frameAlignment = m_currentFunction->scriptData ? m_currentFunction->scriptData->frameAlignment : AS_ARG_SLOT_DWORDS*4;
+	m_regs.stackFramePointer = (asDWORD*)(asPWORD(returnValue - m_argumentsSize) & ~asPWORD(frameAlignment - 1));
 	m_originalStackPointer   = m_regs.stackPointer;
 	m_originalStackIndex     = m_stackIndex;
 	m_regs.stackPointer      = m_regs.stackFramePointer;
@@ -817,7 +822,7 @@ int asCContext::Prepare(asIScriptFunction *func)
 		if( m_currentFunction->objectType )
 			ptr += AS_PTR_SIZE;
 
-		*(void**)ptr = (void*)(m_regs.stackFramePointer + m_argumentsSize);
+		*(void**)ptr = (void*)returnValue;
 	}
 
 	return asSUCCESS;
@@ -1098,7 +1103,7 @@ int asCContext::SetArgByte(asUINT arg, asBYTE value)
 		offset += AS_PTR_SIZE;
 
 	for( asUINT n = 0; n < arg; n++ )
-		offset += m_initialFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += m_initialFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Set the value
 	*(asBYTE*)&m_regs.stackFramePointer[offset] = value;
@@ -1141,7 +1146,7 @@ int asCContext::SetArgWord(asUINT arg, asWORD value)
 		offset += AS_PTR_SIZE;
 
 	for( asUINT n = 0; n < arg; n++ )
-		offset += m_initialFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += m_initialFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Set the value
 	*(asWORD*)&m_regs.stackFramePointer[offset] = value;
@@ -1184,7 +1189,7 @@ int asCContext::SetArgDWord(asUINT arg, asDWORD value)
 		offset += AS_PTR_SIZE;
 
 	for( asUINT n = 0; n < arg; n++ )
-		offset += m_initialFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += m_initialFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Set the value
 	*(asDWORD*)&m_regs.stackFramePointer[offset] = value;
@@ -1227,7 +1232,7 @@ int asCContext::SetArgQWord(asUINT arg, asQWORD value)
 		offset += AS_PTR_SIZE;
 
 	for( asUINT n = 0; n < arg; n++ )
-		offset += m_initialFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += m_initialFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Set the value
 	*(asQWORD*)(&m_regs.stackFramePointer[offset]) = value;
@@ -1270,7 +1275,7 @@ int asCContext::SetArgFloat(asUINT arg, float value)
 		offset += AS_PTR_SIZE;
 
 	for( asUINT n = 0; n < arg; n++ )
-		offset += m_initialFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += m_initialFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Set the value
 	*(float*)(&m_regs.stackFramePointer[offset]) = value;
@@ -1313,7 +1318,7 @@ int asCContext::SetArgDouble(asUINT arg, double value)
 		offset += AS_PTR_SIZE;
 
 	for( asUINT n = 0; n < arg; n++ )
-		offset += m_initialFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += m_initialFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Set the value
 	*(double*)(&m_regs.stackFramePointer[offset]) = value;
@@ -1350,7 +1355,7 @@ int asCContext::SetArgAddress(asUINT arg, void *value)
 		offset += AS_PTR_SIZE;
 
 	for( asUINT n = 0; n < arg; n++ )
-		offset += m_initialFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += m_initialFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Set the value
 	*(asPWORD*)(&m_regs.stackFramePointer[offset]) = (asPWORD)value;
@@ -1408,7 +1413,7 @@ int asCContext::SetArgObject(asUINT arg, void *obj)
 		offset += AS_PTR_SIZE;
 
 	for( asUINT n = 0; n < arg; n++ )
-		offset += m_initialFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += m_initialFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Set the value
 	*(asPWORD*)(&m_regs.stackFramePointer[offset]) = (asPWORD)obj;
@@ -1445,7 +1450,7 @@ int asCContext::SetArgVarType(asUINT arg, void *ptr, int typeId)
 		offset += AS_PTR_SIZE;
 
 	for( asUINT n = 0; n < arg; n++ )
-		offset += m_initialFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += m_initialFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// Set the typeId and pointer
 	*(asPWORD*)(&m_regs.stackFramePointer[offset]) = (asPWORD)ptr;
@@ -1476,7 +1481,7 @@ void *asCContext::GetAddressOfArg(asUINT arg)
 		offset += AS_PTR_SIZE;
 
 	for( asUINT n = 0; n < arg; n++ )
-		offset += m_initialFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += m_initialFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 
 	// We should return the address of the location where the argument value will be placed
 
@@ -1986,14 +1991,12 @@ int asCContext::GetLineNumber(asUINT stackLevel, int *column, const char **secti
 // internal
 bool asCContext::ReserveStackSpace(asUINT size)
 {
-#ifdef WIP_16BYTE_ALIGN
-	// Pad size to a multiple of MAX_TYPE_ALIGNMENT.
-	const asUINT remainder = size % MAX_TYPE_ALIGNMENT;
+	// Pad size to a multiple of AS_MAX_TYPE_ALIGNMENT.
+	const asUINT remainder = size % AS_MAX_TYPE_ALIGNMENT;
 	if(remainder != 0)
 	{
-		size = size + (MAX_TYPE_ALIGNMENT - (size % MAX_TYPE_ALIGNMENT));
+		size = size + (AS_MAX_TYPE_ALIGNMENT - (size % AS_MAX_TYPE_ALIGNMENT));
 	}
-#endif
 
 	// Make sure the first stack block is allocated
 	if( m_stackBlocks.GetLength() == 0 )
@@ -2001,31 +2004,23 @@ bool asCContext::ReserveStackSpace(asUINT size)
 		m_stackBlockSize = m_engine->ep.initContextStackSize;
 		asASSERT( m_stackBlockSize > 0 );
 
-#ifndef WIP_16BYTE_ALIGN
-		asDWORD *stack = asNEWARRAY(asDWORD,m_stackBlockSize);
-#else
-		asDWORD *stack = asNEWARRAYALIGNED(asDWORD, m_stackBlockSize, MAX_TYPE_ALIGNMENT);
-#endif
+		asDWORD *stack = asNEWARRAYALIGNED(asDWORD, m_stackBlockSize, AS_MAX_TYPE_ALIGNMENT);
 		if( stack == 0 )
 		{
 			// Out of memory
 			return false;
 		}
 
-#ifdef WIP_16BYTE_ALIGN
-		asASSERT( isAligned(stack, MAX_TYPE_ALIGNMENT) );
-#endif
+		asASSERT( isAligned(stack, AS_MAX_TYPE_ALIGNMENT) );
 
 		m_stackBlocks.PushLast(stack);
 		m_stackIndex = 0;
 		m_regs.stackPointer = m_stackBlocks[0] + m_stackBlockSize;
 
-#ifdef WIP_16BYTE_ALIGN
 		// Align the stack pointer. This is necessary as the m_stackBlockSize is not necessarily evenly divisable with the max alignment
-		((asPWORD&)m_regs.stackPointer) &= ~(MAX_TYPE_ALIGNMENT-1);
+		((asPWORD&)m_regs.stackPointer) &= ~asPWORD(AS_MAX_TYPE_ALIGNMENT-1);
 
-		asASSERT( isAligned(m_regs.stackPointer, MAX_TYPE_ALIGNMENT) );
-#endif
+		asASSERT( isAligned(m_regs.stackPointer, AS_MAX_TYPE_ALIGNMENT) );
 	}
 
 	// Check if there is enough space on the current stack block, otherwise move
@@ -2052,11 +2047,7 @@ bool asCContext::ReserveStackSpace(asUINT size)
 		if( m_stackBlocks.GetLength() == m_stackIndex )
 		{
 			// Allocate the new stack block, with twice the size of the previous
-#ifndef WIP_16BYTE_ALIGN
-			asDWORD *stack = asNEWARRAY(asDWORD, (m_stackBlockSize << m_stackIndex));
-#else
-			asDWORD *stack = asNEWARRAYALIGNED(asDWORD, (m_stackBlockSize << m_stackIndex), MAX_TYPE_ALIGNMENT);
-#endif
+			asDWORD *stack = asNEWARRAYALIGNED(asDWORD, (m_stackBlockSize << m_stackIndex), AS_MAX_TYPE_ALIGNMENT);
 			if( stack == 0 )
 			{
 				// Out of memory
@@ -2069,9 +2060,7 @@ bool asCContext::ReserveStackSpace(asUINT size)
 				return false;
 			}
 
-#ifdef WIP_16BYTE_ALIGN
-			asASSERT( isAligned(stack, MAX_TYPE_ALIGNMENT) );
-#endif
+			asASSERT( isAligned(stack, AS_MAX_TYPE_ALIGNMENT) );
 
 			m_stackBlocks.PushLast(stack);
 		}
@@ -2084,12 +2073,10 @@ bool asCContext::ReserveStackSpace(asUINT size)
 			                  (m_currentFunction->objectType ? AS_PTR_SIZE : 0) -
 			                  (m_currentFunction->DoesReturnOnStack() ? AS_PTR_SIZE : 0);
 
-#ifdef WIP_16BYTE_ALIGN
 		// Align the stack pointer
-		(asPWORD&)m_regs.stackPointer &= ~(MAX_TYPE_ALIGNMENT-1);
+		(asPWORD&)m_regs.stackPointer &= ~asPWORD(AS_MAX_TYPE_ALIGNMENT-1);
 
-		asASSERT( isAligned(m_regs.stackPointer, MAX_TYPE_ALIGNMENT) );
-#endif
+		asASSERT( isAligned(m_regs.stackPointer, AS_MAX_TYPE_ALIGNMENT) );
 	}
 
 	return true;
@@ -2134,6 +2121,22 @@ void asCContext::PrepareScriptFunction()
 			                (m_currentFunction->DoesReturnOnStack() ? AS_PTR_SIZE : 0);
 			memcpy(m_regs.stackPointer, oldStackPointer, sizeof(asDWORD)*numDwords);
 		}
+	}
+
+	// The stack pointer is always aligned to 8 bytes, as all values pushed on the stack take up 8 bytes.
+	// If the function has local variables that require a larger alignment the arguments are moved down
+	// so the frame pointer gets the needed alignment. This is safe as the caller's stack pointer is
+	// restored from the call state when the function returns. The space for this is included in stackNeeded.
+	asASSERT( isAligned(m_regs.stackPointer, AS_ARG_SLOT_DWORDS*4) );
+	asUINT misalignment = asUINT(asPWORD(m_regs.stackPointer) & (m_currentFunction->scriptData->frameAlignment - 1));
+	if( misalignment )
+	{
+		int numDwords = m_currentFunction->GetSpaceNeededForArguments() +
+		                (m_currentFunction->objectType ? AS_PTR_SIZE : 0) +
+		                (m_currentFunction->DoesReturnOnStack() ? AS_PTR_SIZE : 0);
+		asDWORD *alignedStackPointer = m_regs.stackPointer - misalignment/4;
+		memmove(alignedStackPointer, m_regs.stackPointer, sizeof(asDWORD)*numDwords);
+		m_regs.stackPointer = alignedStackPointer;
 	}
 
 	// Update framepointer
@@ -2359,14 +2362,17 @@ static const void *const dispatch_table[256] = {
 
 	// Push a dword value on the stack
 	INSTRUCTION(asBC_PshC4):
-		--l_sp;
+		// All values on the stack take up 8 bytes
+		l_sp -= AS_ARG_SLOT_DWORDS;
+		*(asQWORD*)l_sp = 0;
 		*l_sp = asBC_DWORDARG(l_bc);
 		l_bc += 2;
 		NEXT_INSTRUCTION();
 
 	// Push the dword value of a variable on the stack
 	INSTRUCTION(asBC_PshV4):
-		--l_sp;
+		l_sp -= AS_ARG_SLOT_DWORDS;
+		*(asQWORD*)l_sp = 0;
 		*l_sp = *(l_fp - asBC_SWORDARG0(l_bc));
 		l_bc++;
 		NEXT_INSTRUCTION();
@@ -2412,7 +2418,8 @@ static const void *const dispatch_table[256] = {
 
 	// Push the dword value of a global variable on the stack
 	INSTRUCTION(asBC_PshG4):
-		--l_sp;
+		l_sp -= AS_ARG_SLOT_DWORDS;
+		*(asQWORD*)l_sp = 0;
 		*l_sp = *(asDWORD*)asBC_PTRARG(l_bc);
 		l_bc += 1 + AS_PTR_SIZE;
 		NEXT_INSTRUCTION();
@@ -3362,7 +3369,7 @@ static const void *const dispatch_table[256] = {
 			asPWORD *a = (asPWORD*)(l_sp + asBC_WORDARG0(l_bc));
 
 			// Replace the variable index with the object handle held in the variable
-			*(asPWORD**)a = *(asPWORD**)(l_fp - *a);
+			*(asPWORD**)a = *(asPWORD**)(l_fp - (int)*a);
 		}
 		l_bc++;
 		NEXT_INSTRUCTION();
@@ -3403,7 +3410,8 @@ static const void *const dispatch_table[256] = {
 
 	INSTRUCTION(asBC_TYPEID):
 		// Equivalent to PshC4, but kept as separate instruction for bytecode serialization
-		--l_sp;
+		l_sp -= AS_ARG_SLOT_DWORDS;
+		*(asQWORD*)l_sp = 0;
 		*l_sp = asBC_DWORDARG(l_bc);
 		l_bc += 2;
 		NEXT_INSTRUCTION();
@@ -4675,11 +4683,19 @@ static const void *const dispatch_table[256] = {
 
 			asUINT size = asBC_DWORDARG(l_bc);
 			asBYTE **var = (asBYTE**)(l_fp - asBC_SWORDARG0(l_bc));
-#ifndef WIP_16BYTE_ALIGN
-			*var = asNEWARRAY(asBYTE, size);
-#else
-			*var = asNEWARRAYALIGNED(asBYTE, size, MAX_TYPE_ALIGNMENT);
-#endif
+
+			// The list buffer holds objects, so it is allocated with the same memory functions
+			// as objects. It is freed with CallFree when the list pattern variable is destroyed
+			*var = (asBYTE*)m_engine->CallAlloc(size, AS_MAX_TYPE_ALIGNMENT);
+			if( *var == 0 )
+			{
+				m_regs.programPointer    = l_bc;
+				m_regs.stackPointer      = l_sp;
+				m_regs.stackFramePointer = l_fp;
+
+				SetInternalException(TXT_OUT_OF_MEMORY);
+				return;
+			}
 
 			// Clear the buffer for the pointers that will be placed in it
 			memset(*var, 0, size);
@@ -4897,7 +4913,7 @@ static const void *const dispatch_table[256] = {
 
 				// Pop the int arg from the stack
 				int arg = *(int*)l_sp;
-				l_sp++;
+				l_sp += AS_ARG_SLOT_DWORDS;
 
 				// Call the method
 				m_callingSystemFunction = m_engine->scriptFunctions[i];
@@ -5297,7 +5313,8 @@ void asCContext::DetermineLiveObjects(asCArray<int> &liveObjects, asUINT stackLe
 
 	// Determine which object variables that are really live ones
 	liveObjects.SetLength(func->scriptData->variables.GetLength());
-	memset(liveObjects.AddressOf(), 0, sizeof(int)*liveObjects.GetLength());
+	if( liveObjects.GetLength() )
+		memset(liveObjects.AddressOf(), 0, sizeof(int)*liveObjects.GetLength());
 	for( int n = 0; n < (int)func->scriptData->objVariableInfo.GetLength(); n++ )
 	{
 		// Find the first variable info with a larger position than the current
@@ -5432,7 +5449,7 @@ void asCContext::CleanArgsOnStack()
 						func = CastToFuncdefType(m_currentFunction->parameterTypes[v].GetTypeInfo())->funcdef;
 					break;
 				}
-				paramPos -= m_currentFunction->parameterTypes[v].GetSizeOnStackDWords();
+				paramPos -= m_currentFunction->parameterTypes[v].GetSizeOfArgSlotDWords();
 			}
 		}
 	}
@@ -5479,7 +5496,7 @@ void asCContext::CleanArgsOnStack()
 			}
 		}
 
-		offset += func->parameterTypes[n].GetSizeOnStackDWords();
+		offset += func->parameterTypes[n].GetSizeOfArgSlotDWords();
 	}
 
 	// Restore the stack pointer
@@ -5716,7 +5733,7 @@ bool asCContext::CleanStackFrame(bool catchException)
 			}
 		}
 
-		offset += m_currentFunction->parameterTypes[n].GetSizeOnStackDWords();
+		offset += m_currentFunction->parameterTypes[n].GetSizeOfArgSlotDWords();
 	}
 
 	return exceptionCaught;
@@ -5914,12 +5931,13 @@ int asCContext::CallGeneric(asCScriptFunction *descr)
 	{
 		varArgCount = *args;
 
-		args += 1;
-		popSize += 1;
+		// The argument count takes up a full slot on the stack
+		args += AS_ARG_SLOT_DWORDS;
+		popSize += AS_ARG_SLOT_DWORDS;
 
 		// Calculate the arguments that need to be popped
 		asCDataType variadicType = descr->parameterTypes[descr->parameterTypes.GetLength() - 1];
-		int sizeOfVariadicArg = variadicType.GetSizeOnStackDWords();
+		int sizeOfVariadicArg = variadicType.GetSizeOfArgSlotDWords();
 
 		// sysFunc->paramSize already added one variadic arg for the ..., but there might not actually be any
 		popSize -= sizeOfVariadicArg;
@@ -5934,6 +5952,7 @@ int asCContext::CallGeneric(asCScriptFunction *descr)
 
 	asCGeneric& gen = descr->IsVariadic() ? genVar : genOrdinary;
 
+	bool cppException = false;
 	m_callingSystemFunction = descr;
 #ifdef AS_NO_EXCEPTIONS
 	func(&gen);
@@ -5946,6 +5965,8 @@ int asCContext::CallGeneric(asCScriptFunction *descr)
 	}
 	catch (...)
 	{
+		cppException = true;
+
 		// Convert the exception to a script exception so the VM can
 		// properly report the error to the application and then clean up
 		HandleAppException();
@@ -5963,6 +5984,26 @@ int asCContext::CallGeneric(asCScriptFunction *descr)
 	{
 		asASSERT(!(descr->returnType.GetTypeInfo()->flags & asOBJ_NOCOUNT));
 		m_engine->CallObjectMethod(m_regs.objectRegister, CastToObjectType(descr->returnType.GetTypeInfo())->beh.addref);
+	}
+
+	// Clean-up the returned handle if there is an exception, same as for native calls
+	if( m_status == asEXECUTION_EXCEPTION && m_regs.objectRegister && descr->returnType.IsObjectHandle() )
+	{
+		if( descr->returnType.IsFuncdef() )
+			reinterpret_cast<asIScriptFunction*>(m_regs.objectRegister)->Release();
+		else if( CastToObjectType(descr->returnType.GetTypeInfo())->beh.release )
+			m_engine->CallObjectMethod(m_regs.objectRegister, CastToObjectType(descr->returnType.GetTypeInfo())->beh.release);
+		m_regs.objectRegister = 0;
+	}
+
+	// Destroy the returned value if there is an exception, same as for native calls. The caller
+	// will not destroy it as the value is only considered alive after the call returns. If a C++
+	// exception was thrown the construction may not have completed, so the value is left alone.
+	if( m_status == asEXECUTION_EXCEPTION && !cppException && gen.returnValueConstructed && descr->DoesReturnOnStack() )
+	{
+		asCObjectType *ot = CastToObjectType(descr->returnType.GetTypeInfo());
+		if( ot->beh.destruct )
+			m_engine->CallObjectMethod(gen.GetAddressOfReturnLocation(), ot->beh.destruct);
 	}
 
 	// Clean up arguments
@@ -6052,7 +6093,7 @@ int asCContext::GetVar(asUINT varIndex, asUINT stackLevel, const char** name, in
 						*typeModifiers = func->inOutFlags[n];
 						break;
 					}
-					stackPos -= func->parameterTypes[n].GetSizeOnStackDWords();
+					stackPos -= func->parameterTypes[n].GetSizeOfArgSlotDWords();
 				}
 			}
 			else
@@ -6428,10 +6469,8 @@ int asCContext::GetArgsOnStackCount(asUINT stackLevel)
 			// TODO: When enums can be of different sizes this needs to be adjusted
 			if ((flags & asTM_INOUTREF) || (typeId & asTYPEID_MASK_OBJECT))
 				stackDelta -= AS_PTR_SIZE;
-			else if (typeId == asTYPEID_UINT64 || typeId == asTYPEID_INT64 || typeId == asTYPEID_DOUBLE)
-				stackDelta -= 2;
 			else
-				stackDelta -= 1;
+				stackDelta -= AS_ARG_SLOT_DWORDS; // All values take up a full slot on the stack
 		}
 
 		// Determine the args already pushed on the stack
@@ -6448,10 +6487,8 @@ int asCContext::GetArgsOnStackCount(asUINT stackLevel)
 					// TODO: The value pushed on the stack here can be just the offset of the variable, not the actual pointer
 					stackPos -= AS_PTR_SIZE;
 				}
-				else if (typeId == asTYPEID_UINT64 || typeId == asTYPEID_INT64 || typeId == asTYPEID_DOUBLE)
-					stackPos -= 2;
 				else
-					stackPos -= 1;
+					stackPos -= AS_ARG_SLOT_DWORDS; // All values take up a full slot on the stack
 				m_argsOnStackCache.PushLast(typeId);
 				m_argsOnStackCache.PushLast(flags);
 				continue;
@@ -6520,10 +6557,8 @@ int asCContext::GetArgOnStack(asUINT stackLevel, asUINT arg, int* outTypeId, asU
 
 		if ((flags & asTM_INOUTREF) || (typeId & asTYPEID_MASK_OBJECT))
 			stackDelta += AS_PTR_SIZE;
-		else if (typeId == asTYPEID_UINT64 || typeId == asTYPEID_INT64 || typeId == asTYPEID_DOUBLE)
-			stackDelta += 2;
 		else
-			stackDelta += 1;
+			stackDelta += AS_ARG_SLOT_DWORDS; // All values take up a full slot on the stack
 	}
 
 	if (outAddress) *outAddress = sp + stackDelta;

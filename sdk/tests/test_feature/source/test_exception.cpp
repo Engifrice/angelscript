@@ -1,5 +1,6 @@
 #include "utils.h"
 #include <exception>
+#include "../../../add_on/autowrapper/aswrappedcall.h"
 using namespace std;
 
 namespace TestException
@@ -135,6 +136,64 @@ class ApplicationTestClass
 	int refCount = 0;
 };
 
+// Value type that keeps track of how many instances are alive, to detect
+// leaked or doubly destroyed return values when a function raises an exception
+struct CountedValue
+{
+	CountedValue() { alive++; }
+	CountedValue(const CountedValue&) { alive++; }
+	~CountedValue() { alive--; }
+	CountedValue& operator=(const CountedValue&) { return *this; }
+
+	static int alive;
+};
+int CountedValue::alive = 0;
+
+static void CountedValue_Construct(asIScriptGeneric* gen) { new(gen->GetObject()) CountedValue(); }
+static void CountedValue_CopyConstruct(asIScriptGeneric* gen) { new(gen->GetObject()) CountedValue(*(CountedValue*)gen->GetArgObject(0)); }
+static void CountedValue_Destruct(asIScriptGeneric* gen) { ((CountedValue*)gen->GetObject())->~CountedValue(); }
+
+// Returns the value with SetReturnObject and then raises a script exception
+static void CountedValue_ReturnWithSetReturnObject(asIScriptGeneric* gen)
+{
+	CountedValue v;
+	gen->SetReturnObject(&v);
+	asGetActiveContext()->SetException("SetReturnObject");
+}
+
+// Constructs the value in the return location and then raises a script exception
+static void CountedValue_ReturnWithPlacementNew(asIScriptGeneric* gen)
+{
+	new(gen->GetAddressOfReturnLocation()) CountedValue();
+	asGetActiveContext()->SetException("PlacementNew");
+}
+
+// Returns the value without raising any exception
+static void CountedValue_ReturnNormally(asIScriptGeneric* gen)
+{
+	new(gen->GetAddressOfReturnLocation()) CountedValue();
+}
+
+// Takes the return location but throws a C++ exception before constructing the value
+static void CountedValue_ThrowBeforeConstruct(asIScriptGeneric* gen)
+{
+	gen->GetAddressOfReturnLocation();
+	throw std::exception();
+}
+
+static void RegisterCountedValue(asIScriptEngine* engine)
+{
+	engine->RegisterObjectType("CountedValue", sizeof(CountedValue), asOBJ_VALUE | asGetTypeTraits<CountedValue>());
+	engine->RegisterObjectBehaviour("CountedValue", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(CountedValue_Construct), asCALL_GENERIC);
+	engine->RegisterObjectBehaviour("CountedValue", asBEHAVE_CONSTRUCT, "void f(const CountedValue &in)", asFUNCTION(CountedValue_CopyConstruct), asCALL_GENERIC);
+	engine->RegisterObjectBehaviour("CountedValue", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(CountedValue_Destruct), asCALL_GENERIC);
+	engine->RegisterObjectMethod("CountedValue", "CountedValue &opAssign(const CountedValue &in)", WRAP_MFN(CountedValue, operator=), asCALL_GENERIC);
+	engine->RegisterGlobalFunction("CountedValue returnWithSetReturnObject()", asFUNCTION(CountedValue_ReturnWithSetReturnObject), asCALL_GENERIC);
+	engine->RegisterGlobalFunction("CountedValue returnWithPlacementNew()", asFUNCTION(CountedValue_ReturnWithPlacementNew), asCALL_GENERIC);
+	engine->RegisterGlobalFunction("CountedValue returnNormally()", asFUNCTION(CountedValue_ReturnNormally), asCALL_GENERIC);
+	engine->RegisterGlobalFunction("CountedValue throwBeforeConstruct()", asFUNCTION(CountedValue_ThrowBeforeConstruct), asCALL_GENERIC);
+}
+
 bool Test()
 {
 	bool fail = false;
@@ -150,9 +209,9 @@ bool Test()
 		bout.buffer = "";
 		RegisterStdString(engine);
 		engine->RegisterObjectType("ApplicationTestClass", 0, asOBJ_REF);
-		engine->RegisterObjectBehaviour("ApplicationTestClass", asBEHAVE_FACTORY, "ApplicationTestClass@ f()", asFUNCTION(ApplicationTestClass::Create), asCALL_CDECL);
-		engine->RegisterObjectBehaviour("ApplicationTestClass", asBEHAVE_ADDREF, "void f()", asMETHOD(ApplicationTestClass, AddRef), asCALL_THISCALL);
-		engine->RegisterObjectBehaviour("ApplicationTestClass", asBEHAVE_RELEASE, "void f()", asMETHOD(ApplicationTestClass, Release), asCALL_THISCALL);
+		engine->RegisterObjectBehaviour("ApplicationTestClass", asBEHAVE_FACTORY, "ApplicationTestClass@ f()", WRAP_FN(ApplicationTestClass::Create), asCALL_GENERIC);
+		engine->RegisterObjectBehaviour("ApplicationTestClass", asBEHAVE_ADDREF, "void f()", WRAP_MFN(ApplicationTestClass, AddRef), asCALL_GENERIC);
+		engine->RegisterObjectBehaviour("ApplicationTestClass", asBEHAVE_RELEASE, "void f()", WRAP_MFN(ApplicationTestClass, Release), asCALL_GENERIC);
 		asIScriptModule* mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
 		mod->AddScriptSection("test",
 			R"(
@@ -185,11 +244,85 @@ bool Test()
 		}
 	}
 
+	// Test value type returned from a generic function that raises a script exception.
+	// The returned value must be destroyed by the engine, whether it was constructed
+	// with SetReturnObject or directly in the return location
+	{
+		asIScriptEngine *engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+		RegisterCountedValue(engine);
+		asIScriptModule* mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
+		mod->AddScriptSection("test",
+			R"(
+			void main()
+			{
+				try { CountedValue a = returnWithSetReturnObject(); } catch {}
+				try { CountedValue b = returnWithPlacementNew(); } catch {}
+				CountedValue c = returnNormally();
+			}
+			)");
+		r = mod->Build();
+		if (r < 0)
+			TEST_FAILED;
+		CountedValue::alive = 0;
+		r = ExecuteString(engine, "main()", mod);
+		if (r != asEXECUTION_FINISHED)
+			TEST_FAILED;
+		if (CountedValue::alive != 0)
+		{
+			PRINTF("CountedValue::alive is %d, expected 0\n", CountedValue::alive);
+			TEST_FAILED;
+		}
+
+		// Also without catching the exception, so the context unwinds the stack
+		CountedValue::alive = 0;
+		r = ExecuteString(engine, "CountedValue a = returnWithPlacementNew();", mod);
+		if (r != asEXECUTION_EXCEPTION)
+			TEST_FAILED;
+		if (CountedValue::alive != 0)
+		{
+			PRINTF("CountedValue::alive is %d, expected 0\n", CountedValue::alive);
+			TEST_FAILED;
+		}
+
+		engine->ShutDownAndRelease();
+		if (bout.buffer != "")
+		{
+			PRINTF("%s", bout.buffer.c_str());
+			TEST_FAILED;
+		}
+	}
+
 	// Skip these tests if the library is not build to support exceptions
 	if (strstr(asGetLibraryOptions(), "AS_NO_EXCEPTIONS"))
 	{
 		PRINTF("Tests in %s skipped due to AS_NO_EXCEPTIONS\n", __FILE__);
 		return false;
+	}
+
+	// Test value type returned from a generic function that throws a C++ exception before constructing
+	// the value. The engine must not destroy the value as it was never constructed
+	{
+		asIScriptEngine *engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+		RegisterCountedValue(engine);
+		CountedValue::alive = 0;
+		r = ExecuteString(engine, "CountedValue a = throwBeforeConstruct();");
+		if (r != asEXECUTION_EXCEPTION)
+			TEST_FAILED;
+		if (CountedValue::alive != 0)
+		{
+			PRINTF("CountedValue::alive is %d, expected 0\n", CountedValue::alive);
+			TEST_FAILED;
+		}
+		engine->ShutDownAndRelease();
+		if (bout.buffer != "")
+		{
+			PRINTF("%s", bout.buffer.c_str());
+			TEST_FAILED;
+		}
 	}
 
 	// Test script exception thrown in a nested script call
@@ -202,7 +335,7 @@ bool Test()
 		RegisterStdString(engine);
 		RegisterExceptionRoutines(engine);
 
-		engine->RegisterGlobalFunction("void callAppFunc()", asFUNCTION(callAppFunc), asCALL_CDECL);
+		engine->RegisterGlobalFunction("void callAppFunc()", WRAP_FN(callAppFunc), asCALL_GENERIC);
 		engine->RegisterGlobalFunction("void assert(bool)", asFUNCTION(Assert), asCALL_GENERIC);
 
 		asIScriptModule* mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
@@ -837,7 +970,7 @@ bool Test()
 			asIScriptFunction *func = type->GetMethodByDecl("void Test(string c)");
 			ctx = engine->CreateContext();
 			ctx->Prepare(func);
-			asIScriptContext *obj = (asIScriptContext*)engine->CreateScriptObject(type);
+			asIScriptObject *obj = (asIScriptObject*)engine->CreateScriptObject(type);
 			ctx->SetObject(obj); // Just sets the address
 			CScriptString *str = new CScriptString();
 			ctx->SetArgObject(0, str); // Makes a copy of the object

@@ -59,6 +59,7 @@ bool TestVector3();
 
 namespace TestLiteral           { bool Test(); }
 namespace TestForEach           { bool Test(); }
+namespace TestAlignment         { bool Test(); }
 namespace TestException         { bool Test(); }
 namespace TestCDeclReturn       { bool Test(); }
 namespace TestCustomMem         { bool Test(); }
@@ -188,6 +189,8 @@ public:
 		_CrtSetDbgFlag(_CRTDBG_LEAK_CHECK_DF | _CRTDBG_ALLOC_MEM_DF);
 		_CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
 		_CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+		_CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+		_CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
 
 		// Use _CrtSetBreakAlloc(n) to find a specific memory leak
 		// Remember to "Enable Windows Debug Heap Allocator" in the debug options on MSVC2015. Without it
@@ -215,8 +218,24 @@ public:
 // + AS_MAX_PORTABILITY
 //----------------------------------
 
+// Run all tests even if some fail, and list the failed ones at the end
+static const int MAX_FAILED_TESTS = 256;
+static const char *g_failedTests[MAX_FAILED_TESTS];
+static int g_numFailedTests = 0;
+
+#define RUN_TEST(test, name) \
+	if( test ) \
+	{ \
+		PRINTF("-- " name " FAILED\n"); \
+		if( g_numFailedTests < MAX_FAILED_TESTS ) g_failedTests[g_numFailedTests++] = name; \
+	} \
+	else PRINTF("-- " name " passed\n")
+
 int allTests()
 {
+	// Don't buffer the output, so it is not lost if a test crashes
+	setvbuf(stdout, 0, _IONBF, 0);
+
 	PRINTF("AngelScript version: %s\n", asGetLibraryVersion());
 	PRINTF("AngelScript options: %s\n", asGetLibraryOptions());
 
@@ -234,203 +253,213 @@ int allTests()
 
 	InstallMemoryManager();
 
-	if( Test_Addon_Autowrapper::Test()   ) goto failed; else PRINTF("-- Test_Addon_Autowrapper passed\n");
+	RUN_TEST( Test_Addon_Autowrapper::Test(), "Test_Addon_Autowrapper" );
 	if( strstr(asGetLibraryOptions(), "AS_NO_COMPILER")!=0)
 		PRINTF("Skipping compiler tests as AS_NO_COMPILER is defined\n");
 	else
 	{
-		if( Test_Addon_ScriptBuilder::Test() ) goto failed; else PRINTF("-- Test_Addon_ScriptBuilder passed\n");
-		if( Test_Addon_ScriptFile::Test()    ) goto failed; else PRINTF("-- Test_Addon_ScriptFile passed\n");
-		if( Test_Addon_ContextMgr::Test()    ) goto failed; else PRINTF("-- Test_Addon_ContextMgr passed\n");
-		if( Test_Addon_ScriptGrid::Test()    ) goto failed; else PRINTF("-- Test_Addon_ScriptGrid passed\n");
-		if( Test_Addon_WeakRef::Test()       ) goto failed; else PRINTF("-- Test_Addon_WeakRef passed\n");
-		if( Test_Addon_Debugger::Test()      ) goto failed; else PRINTF("-- Test_Addon_Debugger passed\n");
-		if( Test_Addon_ScriptBuilder::Test() ) goto failed; else PRINTF("-- Test_Addon_ScriptBuilder passed\n");
-		if( Test_Addon_ScriptMath::Test()    ) goto failed; else PRINTF("-- Test_Addon_ScriptMath passed\n");
-		if( Test_Addon_Serializer::Test()    ) goto failed; else PRINTF("-- Test_Addon_Serializer passed\n");
-		if( Test_Addon_ScriptHandle::Test()  ) goto failed; else PRINTF("-- Test_Addon_ScriptHandle passed\n");
-		if( Test_Addon_ScriptArray::Test()   ) goto failed; else PRINTF("-- Test_Addon_ScriptArray passed\n");
-		if( Test_Addon_Dictionary::Test()    ) goto failed; else PRINTF("-- Test_Addon_Dictionary passed\n");
-		if( Test_Addon_DateTime::Test()      ) goto failed; else PRINTF("-- Test_Addon_DateTime passed\n");
-		if( Test_Addon_StdString::Test()     ) goto failed; else PRINTF("-- Test_Addon_StdString passed\n");
+		RUN_TEST( Test_Addon_ScriptBuilder::Test(), "Test_Addon_ScriptBuilder" );
+		RUN_TEST( Test_Addon_ScriptFile::Test(), "Test_Addon_ScriptFile" );
+		RUN_TEST( Test_Addon_ContextMgr::Test(), "Test_Addon_ContextMgr" );
+		RUN_TEST( Test_Addon_ScriptGrid::Test(), "Test_Addon_ScriptGrid" );
+		RUN_TEST( Test_Addon_WeakRef::Test(), "Test_Addon_WeakRef" );
+		RUN_TEST( Test_Addon_Debugger::Test(), "Test_Addon_Debugger" );
+		RUN_TEST( Test_Addon_ScriptBuilder::Test(), "Test_Addon_ScriptBuilder" );
+		RUN_TEST( Test_Addon_ScriptMath::Test(), "Test_Addon_ScriptMath" );
+		RUN_TEST( Test_Addon_Serializer::Test(), "Test_Addon_Serializer" );
+		RUN_TEST( Test_Addon_ScriptHandle::Test(), "Test_Addon_ScriptHandle" );
+		RUN_TEST( Test_Addon_ScriptArray::Test(), "Test_Addon_ScriptArray" );
+		RUN_TEST( Test_Addon_Dictionary::Test(), "Test_Addon_Dictionary" );
+		RUN_TEST( Test_Addon_DateTime::Test(), "Test_Addon_DateTime" );
+		RUN_TEST( Test_Addon_StdString::Test(), "Test_Addon_StdString" );
 #ifndef _WIN32
 		PRINTF("Skipping test Addon_ScriptSocket as it only works on Windows\n");
 #else
-		if( Test_Addon_ScriptSocket::Test()  ) goto failed; else PRINTF("-- Test_Addon_ScriptSocket passed\n");
+		RUN_TEST( Test_Addon_ScriptSocket::Test(), "Test_Addon_ScriptSocket" );
 #endif
 
-		if( TestLiteral::Test()                     ) goto failed; else PRINTF("-- TestLiteral passed\n");
-		if( TestForEach::Test()                     ) goto failed; else PRINTF("-- TestForEach passed\n");
-		if( TestContext::Test()                     ) goto failed; else PRINTF("-- TestContext passed\n");
-		if( TestComposition::Test()                 ) goto failed; else PRINTF("-- TestComposition passed\n");
-		if( TestPropIntegerDivision::Test()         ) goto failed; else PRINTF("-- TestPropIntegerDivision passed\n");
-		if( TestThisCallMethod_ConfigErrors::Test() ) goto failed; else PRINTF("-- TestThisCallMethod_ConfigErrors passed\n");
-		if( TestAuto::Test()                        ) goto failed; else PRINTF("-- TestAuto passed\n");
-		if( TestPow::Test()                         ) goto failed; else PRINTF("-- TestPow passed\n");
-		if( TestMixin::Test()                       ) goto failed; else PRINTF("-- TestMixin passed\n");
-		if( TestNamespace::Test()                   ) goto failed; else PRINTF("-- TestNamespace passed\n");
-		if( TestShared::Test()                      ) goto failed; else PRINTF("-- TestShared passed\n");
-		if( TestDefaultArg::Test()                  ) goto failed; else PRINTF("-- TestDefaultArg passed\n");
-		if( TestNamedArgs::Test()                   ) goto failed; else PRINTF("-- TestNamedArgs passed\n");
-		if( TestScriptRetRef::Test()                ) goto failed; else PRINTF("-- TestScriptRetRef passed\n");
-		if( TestGarbageCollect::Test()              ) goto failed; else PRINTF("-- TestGarbageCollect passed\n");
-		if( TestFunctionPtr::Test()                 ) goto failed; else PRINTF("-- TestFunctionPtr passed\n");
-		if( TestModule::Test()                      ) goto failed; else PRINTF("-- TestModule passed\n");
-		if( TestGetSet::Test()                      ) goto failed; else PRINTF("-- TestGetSet passed\n");
-		if( TestOperator::Test()                    ) goto failed; else PRINTF("-- TestOperator passed\n");
-		if( TestTemplate::Test()                    ) goto failed; else PRINTF("-- TestTemplate passed\n");
-		if( TestDump::Test()                        ) goto failed; else PRINTF("-- TestDump passed\n");
-		if( TestInheritance::Test()                 ) goto failed; else PRINTF("-- TestInheritance passed\n");
-		if( TestScriptClassMethod::Test()           ) goto failed; else PRINTF("-- TestScriptClassMethod passed\n");
-		if( TestScriptString::Test()                ) goto failed; else PRINTF("-- TestScriptString passed\n");
-		if( TestSaveLoad::Test()                    ) goto failed; else PRINTF("-- TestSaveLoad passed\n");
-		if( TestInterface::Test()                   ) goto failed; else PRINTF("-- TestInterface passed\n");
-		if( TestCastOp::Test()                      ) goto failed; else PRINTF("-- TestCastOp passed\n");
-		if( Test2Modules()                          ) goto failed; else PRINTF("-- Test2Modules passed\n");
-		if( TestArrayObject::Test()                 ) goto failed; else PRINTF("-- TestArrayObject passed\n");
-		if( TestCompiler::Test()                    ) goto failed; else PRINTF("-- TestCompiler passed\n");
-		if( TestOptimize()                          ) goto failed; else PRINTF("-- TestOptimize passed\n");
-		if( TestConversion::Test()                  ) goto failed; else PRINTF("-- TestConversion passed\n");
-		if( TestRegisterType::Test()                ) goto failed; else PRINTF("-- TestRegisterType passed\n");
-		if( TestRefArgument::Test()                 ) goto failed; else PRINTF("-- TestRefArgument passed\n");
-		if( TestStream::Test()                      ) goto failed; else PRINTF("-- TestStream passed\n");
-		if( TestEnum::Test()                        ) goto failed; else PRINTF("-- TestEnum passed\n");
-		if( TestDynamicConfig::Test()               ) goto failed; else PRINTF("-- TestDynamicConfig passed\n");
-		if( TestObjHandle::Test()                   ) goto failed; else PRINTF("-- TestObjHandle passed\n");
-		if( TestGlobalVar()                         ) goto failed; else PRINTF("-- TestGlobalVar passed\n");
-		if( TestScriptStruct::Test()                ) goto failed; else PRINTF("-- TestScriptStruct passed\n");
-		if( TestRZ::Test()                          ) goto failed; else PRINTF("-- TestRZ passed\n");
-		if( TestArray::Test()                       ) goto failed; else PRINTF("-- TestArray passed\n");
-		if( TestAny::Test()                         ) goto failed; else PRINTF("-- TestAny passed\n");
-		if( TestObjHandle2::Test()                  ) goto failed; else PRINTF("-- TestObjHandle2 passed\n");
-		if( TestVector3()                           ) goto failed; else PRINTF("-- TestVector3 passed\n");
-		if( TestConstObject::Test()                 ) goto failed; else PRINTF("-- TestConstObject passed\n");
-		if( TestImplicitCast::Test()                ) goto failed; else PRINTF("-- TestImplicitCast passed\n");
-		if( TestImplicitHandle::Test()              ) goto failed; else PRINTF("-- TestImplicitHandle passed\n");
-		if( TestFor::Test()                         ) goto failed; else PRINTF("-- TestFor passed\n");
-		if( TestRefCast::Test()                     ) goto failed; else PRINTF("-- TestRefCast passed\n");
-		if( TestStdString()                         ) goto failed; else PRINTF("-- TestStdString passed\n");
-		if( TestStack2::Test()                      ) goto failed; else PRINTF("-- TestStack2 passed\n");
-		if( TestStdVector::Test()                   ) goto failed; else PRINTF("-- TestStdVector passed\n");
-		if( TestArrayHandle::Test()                 ) goto failed; else PRINTF("-- TestArrayHandle passed\n");
-		if( TestDict::Test()                        ) goto failed; else PRINTF("-- TestDict passed\n");
-		if( TestMultiAssign::Test()                 ) goto failed; else PRINTF("-- TestMultiAssign passed\n");
-		if( TestException::Test()                   ) goto failed; else PRINTF("-- TestException passed\n");
-		if( TestInt8::Test()                        ) goto failed; else PRINTF("-- TestInt8 passed\n");
-		if( TestGeneric::Test()                     ) goto failed; else PRINTF("-- TestGeneric passed\n");
-		if( TestBStr()                              ) goto failed; else PRINTF("-- TestBStr passed\n");
-		if( TestTypedef::Test()                     ) goto failed; else PRINTF("-- TestTypedef passed\n");
-		if( TestImport::Test()                      ) goto failed; else PRINTF("-- TestImport passed\n");
-		if( TestAssign::Test()                      ) goto failed; else PRINTF("-- TestAssign passed\n");
-		if( TestSwitch()                            ) goto failed; else PRINTF("-- TestSwitch passed\n");
-		if( TestExceptionMemory::Test()             ) goto failed; else PRINTF("-- TestExceptionMemory passed\n");
-		if( TestObject::Test()                      ) goto failed; else PRINTF("-- TestObject passed\n");
-		if( TestFactory::Test()                     ) goto failed; else PRINTF("-- TestFactory passed\n");
-		if( TestFuncOverload::Test()                ) goto failed; else PRINTF("-- TestFuncOverload passed\n");
-		if( TestObjZeroSize::Test()                 ) goto failed; else PRINTF("-- TestObjZeroSize passed\n");
-		if( TestSingleton::Test()                   ) goto failed; else PRINTF("-- TestSingleton passed\n");
-		if( TestCondition()                         ) goto failed; else PRINTF("-- TestCondition passed\n");
-		if( TestObject2::Test()                     ) goto failed; else PRINTF("-- TestObject2 passed\n");
-		if( TestShark::Test()                       ) goto failed; else PRINTF("-- TestShark passed\n");
-		if( TestBool::Test()                        ) goto failed; else PRINTF("-- TestBool passed\n");
-		if( TestBits::Test()                        ) goto failed; else PRINTF("-- TestBits passed\n");
-		if( TestDestructor::Test()                  ) goto failed; else PRINTF("-- TestDestructor passed\n");
-		if( TestConstructor2::Test()                ) goto failed; else PRINTF("-- TestConstructor2 passed\n");
-		if( TestUnsafeRef::Test()                   ) goto failed; else PRINTF("-- TestUnsafeRef passed\n");
-		if( TestVarType::Test()                     ) goto failed; else PRINTF("-- TestVarType passed\n");
-		if( TestScriptMath::Test()                  ) goto failed; else PRINTF("-- TestScriptMath passed\n");
-		if( TestDebug::Test()                       ) goto failed; else PRINTF("-- TestDebug passed\n");
-		if( TestGetArgPtr::Test()                   ) goto failed; else PRINTF("-- TestGetArgPtr passed\n");
-		if( TestAutoHandle::Test()                  ) goto failed; else PRINTF("-- TestAutoHandle passed\n");
-		if( TestObject3::Test()                     ) goto failed; else PRINTF("-- TestObject3 passed\n");
-		if( TestArrayIntf::Test()                   ) goto failed; else PRINTF("-- TestArrayIntf passed\n");
-		if( TestConstProperty::Test()               ) goto failed; else PRINTF("-- TestConstProperty passed\n");
-		if( TestSuspend::Test()                     ) goto failed; else PRINTF("-- TestSuspend passed\n");
-		if( TestVector3_2::Test()                   ) goto failed; else PRINTF("-- TestVector3_2 passed\n");
-		if( TestNested()                            ) goto failed; else PRINTF("-- TestNested passed\n");
-		if( TestConstructor::Test()                 ) goto failed; else PRINTF("-- TestConstructor passed\n");
-		if( TestExecuteScript()                     ) goto failed; else PRINTF("-- TestExecuteScript passed\n");
-		if( TestCustomMem::Test()                   ) goto failed; else PRINTF("-- TestCustomMem passed\n");
-		if( TestPostProcess::Test()                 ) goto failed; else PRINTF("-- TestPostProcess passed\n");
-		if( TestArgRef::Test()                      ) goto failed; else PRINTF("-- TestArgRef passed\n");
-		if( TestNotInitialized()                    ) goto failed; else PRINTF("-- TestNotInitialized passed\n");
-		if( TestConfig::Test()                      ) goto failed; else PRINTF("-- TestConfig passed\n");
-		if( TestInt64()                             ) goto failed; else PRINTF("-- TestInt64 passed\n");
-		if( TestImport2::Test()                     ) goto failed; else PRINTF("-- TestImport2 passed\n");
-		if( TestEnumGlobVar()                       ) goto failed; else PRINTF("-- TestEnumGlobVar passed\n");
-		if( TestConfigAccess::Test()                ) goto failed; else PRINTF("-- TestConfigAccess passed\n");
-		if( TestDiscard::Test()                     ) goto failed; else PRINTF("-- TestDiscard passed\n");
-		if( TestParser::Test()                      ) goto failed; else PRINTF("-- TestParser passed\n");
-		if( TestFloat::Test()                       ) goto failed; else PRINTF("-- TestFloat passed\n");
-		if( TestTempVar()                           ) goto failed; else PRINTF("-- TestTempVar passed\n");
-		if( TestModuleRef()                         ) goto failed; else PRINTF("-- TestModuleRef passed\n");
-		if( TestExecuteString()                     ) goto failed; else PRINTF("-- TestExecuteString passed\n");
-		if( TestStack()                             ) goto failed; else PRINTF("-- TestStack passed\n");
-		if( TestCreateEngine()                      ) goto failed; else PRINTF("-- TestCreateEngine passed\n");
-		if( TestLongToken()                         ) goto failed; else PRINTF("-- TestLongToken passed\n");
-		if( TestOutput::Test()                      ) goto failed; else PRINTF("-- TestOutput passed\n");
-		if( Test2Func::Test()                       ) goto failed; else PRINTF("-- Test2Func passed\n");
-		if( TestCircularImport::Test()              ) goto failed; else PRINTF("-- TestCircularImport passed\n");
-		if( TestNeverVisited()                      ) goto failed; else PRINTF("-- TestNeverVisited passed\n");
-		if( TestReturnString::Test()                ) goto failed; else PRINTF("-- TestReturnString passed\n");
-		if( TestNegateOperator()                    ) goto failed; else PRINTF("-- TestNegateOperator passed\n");
+		RUN_TEST( TestAlignment::Test(), "TestAlignment" );
+		RUN_TEST( TestLiteral::Test(), "TestLiteral" );
+		RUN_TEST( TestForEach::Test(), "TestForEach" );
+		RUN_TEST( TestContext::Test(), "TestContext" );
+		RUN_TEST( TestComposition::Test(), "TestComposition" );
+		RUN_TEST( TestPropIntegerDivision::Test(), "TestPropIntegerDivision" );
+		RUN_TEST( TestThisCallMethod_ConfigErrors::Test(), "TestThisCallMethod_ConfigErrors" );
+		RUN_TEST( TestAuto::Test(), "TestAuto" );
+		RUN_TEST( TestPow::Test(), "TestPow" );
+		RUN_TEST( TestMixin::Test(), "TestMixin" );
+		RUN_TEST( TestNamespace::Test(), "TestNamespace" );
+		RUN_TEST( TestShared::Test(), "TestShared" );
+		RUN_TEST( TestDefaultArg::Test(), "TestDefaultArg" );
+		RUN_TEST( TestNamedArgs::Test(), "TestNamedArgs" );
+		RUN_TEST( TestScriptRetRef::Test(), "TestScriptRetRef" );
+		RUN_TEST( TestGarbageCollect::Test(), "TestGarbageCollect" );
+		RUN_TEST( TestFunctionPtr::Test(), "TestFunctionPtr" );
+		RUN_TEST( TestModule::Test(), "TestModule" );
+		RUN_TEST( TestGetSet::Test(), "TestGetSet" );
+		RUN_TEST( TestOperator::Test(), "TestOperator" );
+		RUN_TEST( TestTemplate::Test(), "TestTemplate" );
+		RUN_TEST( TestDump::Test(), "TestDump" );
+		RUN_TEST( TestInheritance::Test(), "TestInheritance" );
+		RUN_TEST( TestScriptClassMethod::Test(), "TestScriptClassMethod" );
+		RUN_TEST( TestScriptString::Test(), "TestScriptString" );
+		RUN_TEST( TestSaveLoad::Test(), "TestSaveLoad" );
+		RUN_TEST( TestInterface::Test(), "TestInterface" );
+		RUN_TEST( TestCastOp::Test(), "TestCastOp" );
+		RUN_TEST( Test2Modules(), "Test2Modules" );
+		RUN_TEST( TestArrayObject::Test(), "TestArrayObject" );
+		RUN_TEST( TestCompiler::Test(), "TestCompiler" );
+		RUN_TEST( TestOptimize(), "TestOptimize" );
+		RUN_TEST( TestConversion::Test(), "TestConversion" );
+		RUN_TEST( TestRegisterType::Test(), "TestRegisterType" );
+		RUN_TEST( TestRefArgument::Test(), "TestRefArgument" );
+		RUN_TEST( TestStream::Test(), "TestStream" );
+		RUN_TEST( TestEnum::Test(), "TestEnum" );
+		RUN_TEST( TestDynamicConfig::Test(), "TestDynamicConfig" );
+		RUN_TEST( TestObjHandle::Test(), "TestObjHandle" );
+		RUN_TEST( TestGlobalVar(), "TestGlobalVar" );
+		RUN_TEST( TestScriptStruct::Test(), "TestScriptStruct" );
+		RUN_TEST( TestRZ::Test(), "TestRZ" );
+		RUN_TEST( TestArray::Test(), "TestArray" );
+		RUN_TEST( TestAny::Test(), "TestAny" );
+		RUN_TEST( TestObjHandle2::Test(), "TestObjHandle2" );
+		RUN_TEST( TestVector3(), "TestVector3" );
+		RUN_TEST( TestConstObject::Test(), "TestConstObject" );
+		RUN_TEST( TestImplicitCast::Test(), "TestImplicitCast" );
+		RUN_TEST( TestImplicitHandle::Test(), "TestImplicitHandle" );
+		RUN_TEST( TestFor::Test(), "TestFor" );
+		RUN_TEST( TestRefCast::Test(), "TestRefCast" );
+		RUN_TEST( TestStdString(), "TestStdString" );
+		RUN_TEST( TestStack2::Test(), "TestStack2" );
+		RUN_TEST( TestStdVector::Test(), "TestStdVector" );
+		RUN_TEST( TestArrayHandle::Test(), "TestArrayHandle" );
+		RUN_TEST( TestDict::Test(), "TestDict" );
+		RUN_TEST( TestMultiAssign::Test(), "TestMultiAssign" );
+		RUN_TEST( TestException::Test(), "TestException" );
+		RUN_TEST( TestInt8::Test(), "TestInt8" );
+		RUN_TEST( TestGeneric::Test(), "TestGeneric" );
+		RUN_TEST( TestBStr(), "TestBStr" );
+		RUN_TEST( TestTypedef::Test(), "TestTypedef" );
+		RUN_TEST( TestImport::Test(), "TestImport" );
+		RUN_TEST( TestAssign::Test(), "TestAssign" );
+		RUN_TEST( TestSwitch(), "TestSwitch" );
+		RUN_TEST( TestExceptionMemory::Test(), "TestExceptionMemory" );
+		RUN_TEST( TestObject::Test(), "TestObject" );
+		RUN_TEST( TestFactory::Test(), "TestFactory" );
+		RUN_TEST( TestFuncOverload::Test(), "TestFuncOverload" );
+		RUN_TEST( TestObjZeroSize::Test(), "TestObjZeroSize" );
+		RUN_TEST( TestSingleton::Test(), "TestSingleton" );
+		RUN_TEST( TestCondition(), "TestCondition" );
+		RUN_TEST( TestObject2::Test(), "TestObject2" );
+		RUN_TEST( TestShark::Test(), "TestShark" );
+		RUN_TEST( TestBool::Test(), "TestBool" );
+		RUN_TEST( TestBits::Test(), "TestBits" );
+		RUN_TEST( TestDestructor::Test(), "TestDestructor" );
+		RUN_TEST( TestConstructor2::Test(), "TestConstructor2" );
+		RUN_TEST( TestUnsafeRef::Test(), "TestUnsafeRef" );
+		RUN_TEST( TestVarType::Test(), "TestVarType" );
+		RUN_TEST( TestScriptMath::Test(), "TestScriptMath" );
+		RUN_TEST( TestDebug::Test(), "TestDebug" );
+		RUN_TEST( TestGetArgPtr::Test(), "TestGetArgPtr" );
+		RUN_TEST( TestAutoHandle::Test(), "TestAutoHandle" );
+		RUN_TEST( TestObject3::Test(), "TestObject3" );
+		RUN_TEST( TestArrayIntf::Test(), "TestArrayIntf" );
+		RUN_TEST( TestConstProperty::Test(), "TestConstProperty" );
+		RUN_TEST( TestSuspend::Test(), "TestSuspend" );
+		RUN_TEST( TestVector3_2::Test(), "TestVector3_2" );
+		RUN_TEST( TestNested(), "TestNested" );
+		RUN_TEST( TestConstructor::Test(), "TestConstructor" );
+		RUN_TEST( TestExecuteScript(), "TestExecuteScript" );
+		RUN_TEST( TestCustomMem::Test(), "TestCustomMem" );
+		RUN_TEST( TestPostProcess::Test(), "TestPostProcess" );
+		RUN_TEST( TestArgRef::Test(), "TestArgRef" );
+		RUN_TEST( TestNotInitialized(), "TestNotInitialized" );
+		RUN_TEST( TestConfig::Test(), "TestConfig" );
+		RUN_TEST( TestInt64(), "TestInt64" );
+		RUN_TEST( TestImport2::Test(), "TestImport2" );
+		RUN_TEST( TestEnumGlobVar(), "TestEnumGlobVar" );
+		RUN_TEST( TestConfigAccess::Test(), "TestConfigAccess" );
+		RUN_TEST( TestDiscard::Test(), "TestDiscard" );
+		RUN_TEST( TestParser::Test(), "TestParser" );
+		RUN_TEST( TestFloat::Test(), "TestFloat" );
+		RUN_TEST( TestTempVar(), "TestTempVar" );
+		RUN_TEST( TestModuleRef(), "TestModuleRef" );
+		RUN_TEST( TestExecuteString(), "TestExecuteString" );
+		RUN_TEST( TestStack(), "TestStack" );
+		RUN_TEST( TestCreateEngine(), "TestCreateEngine" );
+		RUN_TEST( TestLongToken(), "TestLongToken" );
+		RUN_TEST( TestOutput::Test(), "TestOutput" );
+		RUN_TEST( Test2Func::Test(), "Test2Func" );
+		RUN_TEST( TestCircularImport::Test(), "TestCircularImport" );
+		RUN_TEST( TestNeverVisited(), "TestNeverVisited" );
+		RUN_TEST( TestReturnString::Test(), "TestReturnString" );
+		RUN_TEST( TestNegateOperator(), "TestNegateOperator" );
 
 		// The following tests are designed specifically to test the native calling conventions.
 		// These are grouped by calling convention and ordered in increasing complexity.
 		{
 			// cdecl
-			if( TestExecute()                 ) goto failed; else PRINTF("-- TestExecute passed\n");
-			if( TestCDeclReturn::Test()       ) goto failed; else PRINTF("-- TestCDeclReturn passed\n");
-			if( TestExecute1Arg()             ) goto failed; else PRINTF("-- TestExecute1Arg passed\n");
-			if( TestExecute2Args()            ) goto failed; else PRINTF("-- TestExecute2Args passed\n");
-			if( TestExecute4Args()            ) goto failed; else PRINTF("-- TestExecute4Args passed\n");
-			if( TestExecute4Argsf()           ) goto failed; else PRINTF("-- TestExecute4Argsf passed\n");
-			if( TestExecuteMixedArgs()        ) goto failed; else PRINTF("-- TestExecuteMixedArgs passed\n");
-			if( TestExecute32Args()           ) goto failed; else PRINTF("-- TestExecute32Args passed\n");
-			if( TestExecute32MixedArgs()      ) goto failed; else PRINTF("-- TestExecute32MixedArgs passed\n");
-			if( TestCDecl_Class()             ) goto failed; else PRINTF("-- TestCDecl_Class passed\n");
-			if( TestCDecl_ClassA()            ) goto failed; else PRINTF("-- TestCDecl_ClassA passed\n");
-			if( TestCDecl_ClassC()            ) goto failed; else PRINTF("-- TestCDecl_ClassC passed\n");
-			if( TestCDecl_ClassD()            ) goto failed; else PRINTF("-- TestCDecl_ClassD passed\n");
-			if( TestCDecl_ClassK()            ) goto failed; else PRINTF("-- TestCDecl_ClassK passed\n");
+			RUN_TEST( TestExecute(), "TestExecute" );
+			RUN_TEST( TestCDeclReturn::Test(), "TestCDeclReturn" );
+			RUN_TEST( TestExecute1Arg(), "TestExecute1Arg" );
+			RUN_TEST( TestExecute2Args(), "TestExecute2Args" );
+			RUN_TEST( TestExecute4Args(), "TestExecute4Args" );
+			RUN_TEST( TestExecute4Argsf(), "TestExecute4Argsf" );
+			RUN_TEST( TestExecuteMixedArgs(), "TestExecuteMixedArgs" );
+			RUN_TEST( TestExecute32Args(), "TestExecute32Args" );
+			RUN_TEST( TestExecute32MixedArgs(), "TestExecute32MixedArgs" );
+			RUN_TEST( TestCDecl_Class(), "TestCDecl_Class" );
+			RUN_TEST( TestCDecl_ClassA(), "TestCDecl_ClassA" );
+			RUN_TEST( TestCDecl_ClassC(), "TestCDecl_ClassC" );
+			RUN_TEST( TestCDecl_ClassD(), "TestCDecl_ClassD" );
+			RUN_TEST( TestCDecl_ClassK(), "TestCDecl_ClassK" );
 
 			// cdecl_objlast and cdecl_objfirst
-			if( TestCDeclObjLast::Test()      ) goto failed; else PRINTF("-- TestCDeclObjLast passed\n");
-			if( TestReturnWithCDeclObjFirst() ) goto failed; else PRINTF("-- TestReturnWithCDeclObjFirst passed\n");
+			RUN_TEST( TestCDeclObjLast::Test(), "TestCDeclObjLast" );
+			RUN_TEST( TestReturnWithCDeclObjFirst(), "TestReturnWithCDeclObjFirst" );
 
 			// thiscall
-			if( TestExecuteThis32MixedArgs()  ) goto failed; else PRINTF("-- TestExecuteThis32MixedArgs passed\n");
-			if( TestThiscallClass()           ) goto failed; else PRINTF("-- TestThiscallClass passed\n");
-			if( TestNotComplexThisCall()      ) goto failed; else PRINTF("-- TestNotComplexThisCall passed\n");
-			if( TestVirtualMethod()           ) goto failed; else PRINTF("-- TestVirtualMethod passed\n");
-			if( TestMultipleInheritance()     ) goto failed; else PRINTF("-- TestMultipleInheritance passed\n");
-			if( TestVirtualInheritance()      ) goto failed; else PRINTF("-- TestVirtualInheritance passed\n");
+			RUN_TEST( TestExecuteThis32MixedArgs(), "TestExecuteThis32MixedArgs" );
+			RUN_TEST( TestThiscallClass(), "TestThiscallClass" );
+			RUN_TEST( TestNotComplexThisCall(), "TestNotComplexThisCall" );
+			RUN_TEST( TestVirtualMethod(), "TestVirtualMethod" );
+			RUN_TEST( TestMultipleInheritance(), "TestMultipleInheritance" );
+			RUN_TEST( TestVirtualInheritance(), "TestVirtualInheritance" );
 
 			// thiscall_asglobal
-			if( TestThiscallAsGlobal::Test()  ) goto failed; else PRINTF("-- TestThiscallAsGlobal passed\n");
+			RUN_TEST( TestThiscallAsGlobal::Test(), "TestThiscallAsGlobal" );
 
 			// thiscall_objlast & objfirst
-			if( TestThisCallMethod::Test()    ) goto failed; else PRINTF("-- TestThisCallMethod passed\n");
+			RUN_TEST( TestThisCallMethod::Test(), "TestThisCallMethod" );
 
 			// stdcall
-			if( TestStdcall4Args()            ) goto failed; else PRINTF("-- TestStdcall4Args passed\n");
-			if( TestNotComplexStdcall()       ) goto failed; else PRINTF("-- TestNotComplexStdcall passed\n");
+			RUN_TEST( TestStdcall4Args(), "TestStdcall4Args" );
+			RUN_TEST( TestNotComplexStdcall(), "TestNotComplexStdcall" );
 
 			// Default functions
-			if( Test_Native_DefaultFunc::Test() ) goto failed; else PRINTF("-- Test_Native_DefaultFunc passed\n");
+			RUN_TEST( Test_Native_DefaultFunc::Test(), "Test_Native_DefaultFunc" );
 		}
 	}
 
 	// This test uses ATL::CString thus it is turned off by default
-//	if( TestCString::Test()           ) goto failed; else PRINTF("-- TestCString passed\n");
+//	RUN_TEST( TestCString::Test(), "TestCString" );
 	// Pointers are not supported by AngelScript at the moment, but they may be in the future
-//	if( TestPointer::Test()           ) goto failed; else PRINTF("-- TestPointer passed\n");
+//	RUN_TEST( TestPointer::Test(), "TestPointer" );
 
 	RemoveMemoryManager();
 
 	// Populate the global engine destroyer after the memory manager has
 	// been removed so we don't get false positives for memory leaks.
 	g_engine.en = asCreateScriptEngine(ANGELSCRIPT_VERSION);
+
+	if( g_numFailedTests )
+	{
+		PRINTF("--------------------------------------------\n");
+		PRINTF("%d test(s) failed:\n", g_numFailedTests);
+		for( int n = 0; n < g_numFailedTests; n++ )
+			PRINTF("   %s\n", g_failedTests[n]);
+		goto failed;
+	}
 
 //succeed:
 	PRINTF("--------------------------------------------\n");
