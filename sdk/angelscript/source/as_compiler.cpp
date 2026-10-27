@@ -9220,6 +9220,18 @@ asUINT asCCompiler::ImplicitConvPrimitiveToObject(asCExprContext *ctx, const asC
 	return cost;
 }
 
+// Checks if a floating-point value converted from a 64-bit integer holds it exactly. The range is
+// checked before converting back, as converting an out of range floating-point value is undefined
+static bool IsExactInt64(double value, asINT64 original)
+{
+	return value >= -9223372036854775808.0 && value < 9223372036854775808.0 && asINT64(value) == original;
+}
+
+static bool IsExactUInt64(double value, asQWORD original)
+{
+	return value >= 0 && value < 18446744073709551616.0 && asQWORD(value) == original;
+}
+
 void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCDataType &to, asCScriptNode *node, EImplicitConv convType)
 {
 	asASSERT(from->type.isConstant);
@@ -9740,7 +9752,8 @@ void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCData
 				ic = (int)from->type.GetConstantDW();
 			float fc = float(ic);
 
-			if( int(fc) != ic )
+			// Compare as double, which holds both values exactly
+			if( double(fc) != double(ic) )
 			{
 				if( convType != asIC_EXPLICIT_VAL_CAST && node ) Warning(TXT_NOT_EXACT, node);
 			}
@@ -9750,7 +9763,7 @@ void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCData
 		else if( from->type.dataType.IsIntegerType() && from->type.dataType.GetSizeInMemoryDWords() == 2 )
 		{
 			float fc = float(asINT64(from->type.GetConstantQW()));
-			if( asINT64(fc) != asINT64(from->type.GetConstantQW()) )
+			if( !IsExactInt64(fc, asINT64(from->type.GetConstantQW())) )
 			{
 				if( convType != asIC_EXPLICIT_VAL_CAST && node ) Warning(TXT_NOT_EXACT, node);
 			}
@@ -9769,7 +9782,8 @@ void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCData
 				uic = from->type.GetConstantDW();
 			float fc = float(uic);
 
-			if( (unsigned int)(fc) != uic )
+			// Compare as double, which holds both values exactly
+			if( double(fc) != double(uic) )
 			{
 				if( convType != asIC_EXPLICIT_VAL_CAST && node ) Warning(TXT_NOT_EXACT, node);
 			}
@@ -9778,9 +9792,9 @@ void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCData
 		}
 		else if( from->type.dataType.IsUnsignedType() && from->type.dataType.GetSizeInMemoryDWords() == 2 )
 		{
-			float fc = float((asINT64)from->type.GetConstantQW());
+			float fc = float(from->type.GetConstantQW());
 
-			if( asQWORD(fc) != from->type.GetConstantQW())
+			if( !IsExactUInt64(fc, from->type.GetConstantQW()) )
 			{
 				if( convType != asIC_EXPLICIT_VAL_CAST && node ) Warning(TXT_NOT_EXACT, node);
 			}
@@ -9820,7 +9834,7 @@ void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCData
 		{
 			double fc = double(asINT64(from->type.GetConstantQW()));
 
-			if( asINT64(fc) != asINT64(from->type.GetConstantQW()) )
+			if( !IsExactInt64(fc, asINT64(from->type.GetConstantQW())) )
 			{
 				if( convType != asIC_EXPLICIT_VAL_CAST && node ) Warning(TXT_NOT_EXACT, node);
 			}
@@ -9848,9 +9862,9 @@ void asCCompiler::ImplicitConversionConstant(asCExprContext *from, const asCData
 		}
 		else if( from->type.dataType.IsUnsignedType() && from->type.dataType.GetSizeInMemoryDWords() == 2 )
 		{
-			double fc = double((asINT64)from->type.GetConstantQW());
+			double fc = double(from->type.GetConstantQW());
 
-			if( asQWORD(fc) != from->type.GetConstantQW())
+			if( !IsExactUInt64(fc, from->type.GetConstantQW()) )
 			{
 				if( convType != asIC_EXPLICIT_VAL_CAST && node ) Warning(TXT_NOT_EXACT, node);
 			}
