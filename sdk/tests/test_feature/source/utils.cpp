@@ -205,13 +205,25 @@ void MyFreeWithStats(void *address)
 	free(address);
 }
 
+// Without AS_DEBUG the library calls the allocation function with only the size, so a function
+// with the matching signature must be registered. Calling a function through a pointer to a
+// different function type is undefined behaviour.
+static void *MyAllocWithStatsWithoutLocation(size_t size)
+{
+	return MyAllocWithStats(size, 0, 0);
+}
+
 void InstallMemoryManager()
 {
 #ifdef TRACK_LOCATIONS
 	assert( strstr(asGetLibraryOptions(), " AS_DEBUG ") );
 #endif
 
-	asSetGlobalMemoryFunctions((asALLOCFUNC_t)MyAllocWithStats, MyFreeWithStats);
+	// With AS_DEBUG the library calls the function with the file and line as well
+	if( strstr(asGetLibraryOptions(), " AS_DEBUG ") )
+		asSetGlobalMemoryFunctions((asALLOCFUNC_t)MyAllocWithStats, MyFreeWithStats);
+	else
+		asSetGlobalMemoryFunctions(MyAllocWithStatsWithoutLocation, MyFreeWithStats);
 }
 
 void PrintAllocIndices()

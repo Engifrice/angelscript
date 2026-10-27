@@ -198,6 +198,11 @@ set_target_properties(test_feature PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT
 # Put the library next to the executable, so it is found when the library is built as a shared library
 set_target_properties(${ANGELSCRIPT_LIBRARY_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/../../bin)
 
+# The socket add-on needs the Winsock library. MSVC links it through a pragma in the source, but other compilers don't
+if(WIN32)
+    target_link_libraries(test_feature ws2_32)
+endif()
+
 # Some tests recurse deeply, which needs more than the default 1MB stack on Windows when built with sanitizers
 if(MSVC)
     target_link_options(test_feature PRIVATE /STACK:16777216)
