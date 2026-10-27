@@ -7,7 +7,7 @@
 using namespace std;
 
 #include <stdio.h>
-#if defined(_MSC_VER) && !defined(_WIN32_WCE) && !defined(__S3E__)
+#if (defined(_MSC_VER) || defined(__MINGW32__)) && !defined(_WIN32_WCE) && !defined(__S3E__)
 #include <direct.h>
 #endif
 #ifdef _WIN32_WCE
@@ -1217,7 +1217,7 @@ string GetCurrentDir()
 	#elif defined(_M_ARM)
 	// TODO: How to determine current working dir on Windows Phone?
 	return "";
-	#elif defined(_MSC_VER)
+	#elif defined(_MSC_VER) || defined(__MINGW32__)
 	return _getcwd(buffer, (int)1024);
 	#else
 	std::string filename;
