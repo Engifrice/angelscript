@@ -442,7 +442,8 @@
 		#pragma warning( disable : 4786 )
 	#endif
 
-	#ifdef _M_X64
+	// The method pointer starts with the function pointer, so the offsets depend on its size
+	#if defined(_M_X64) || defined(_M_ARM64)
 		#define MULTI_BASE_OFFSET(x) (*((const asDWORD*)(&x)+2))
 		#define VIRTUAL_BASE_OFFSET(x) (*((const asDWORD*)(&x)+4))
 	#else
