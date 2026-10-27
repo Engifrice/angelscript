@@ -3369,7 +3369,7 @@ static const void *const dispatch_table[256] = {
 			asPWORD *a = (asPWORD*)(l_sp + asBC_WORDARG0(l_bc));
 
 			// Replace the variable index with the object handle held in the variable
-			*(asPWORD**)a = *(asPWORD**)(l_fp - *a);
+			*(asPWORD**)a = *(asPWORD**)(l_fp - (int)*a);
 		}
 		l_bc++;
 		NEXT_INSTRUCTION();
