@@ -140,7 +140,9 @@ jobs:
           - name: Linux Clang AddressSanitizer and UndefinedBehaviorSanitizer
             os: ubuntu-24.04
             shell: bash
-            cxxflags: -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer
+            # The function check is disabled, as the API takes callbacks of any signature through asFUNCTION
+            # and calls them through a generic function pointer type
+            cxxflags: -fsanitize=address,undefined -fno-sanitize=function -fno-sanitize-recover=undefined -fno-omit-frame-pointer
             ldflags: -fsanitize=address,undefined
             args: -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 
