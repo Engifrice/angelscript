@@ -142,7 +142,8 @@ jobs:
             shell: bash
             # The function check is disabled, as the API takes callbacks of any signature through asFUNCTION
             # and calls them through a generic function pointer type. The ignore list explains the other exclusions
-            cxxflags: -fsanitize=address,undefined -fno-sanitize=function -fsanitize-ignorelist=${{ github.workspace }}/.github/sanitizer-ignorelist.txt -fno-sanitize-recover=undefined -fno-omit-frame-pointer
+            # ({0} is replaced by the workspace directory in the Configure step)
+            cxxflags: -fsanitize=address,undefined -fno-sanitize=function -fsanitize-ignorelist={0}/.github/sanitizer-ignorelist.txt -fno-sanitize-recover=undefined -fno-omit-frame-pointer
             ldflags: -fsanitize=address,undefined
             args: -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 
@@ -167,7 +168,7 @@ jobs:
       # The flags are given in the environment, so CMake adds them to its default flags instead of replacing them
       - name: Configure
         env:
-          CXXFLAGS: ${{ matrix.cxxflags }}
+          CXXFLAGS: ${{ format(matrix.cxxflags, github.workspace) }}
           LDFLAGS: ${{ matrix.ldflags }}
         run: cmake -S sdk/tests/test_feature/projects/cmake -B build ${{ matrix.args }}
 
