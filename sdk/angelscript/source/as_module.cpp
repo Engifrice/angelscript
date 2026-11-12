@@ -1221,6 +1221,21 @@ asITypeInfo *asCModule::GetTypedefByIndex(asUINT index) const
 	return m_typeDefs[index];
 }
 
+// interface
+asUINT asCModule::GetFuncdefCount() const
+{
+	return (asUINT)m_funcDefs.GetLength();
+}
+
+// interface
+asITypeInfo *asCModule::GetFuncdefByIndex(asUINT index) const
+{
+	if( index >= m_funcDefs.GetLength() )
+		return 0;
+
+	return m_funcDefs[index];
+}
+
 // internal
 int asCModule::GetNextImportedFunctionId()
 {

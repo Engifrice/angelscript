@@ -146,6 +146,10 @@ public:
 	virtual asUINT       GetTypedefCount() const;
 	virtual asITypeInfo *GetTypedefByIndex(asUINT index) const;
 
+	// Funcdefs
+	virtual asUINT       GetFuncdefCount() const;
+	virtual asITypeInfo *GetFuncdefByIndex(asUINT index) const;
+
 	// Dynamic binding between modules
 	virtual asUINT      GetImportedFunctionCount() const;
 	virtual int         GetImportedFunctionIndexByDecl(const char *decl) const;
