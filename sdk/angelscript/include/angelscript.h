@@ -886,6 +886,10 @@ public:
 	virtual asUINT       GetTypedefCount() const = 0;
 	virtual asITypeInfo *GetTypedefByIndex(asUINT index) const = 0;
 
+	// Funcdefs (declared by the module's scripts, child funcdefs of classes included)
+	virtual asUINT       GetFuncdefCount() const = 0;
+	virtual asITypeInfo *GetFuncdefByIndex(asUINT index) const = 0;
+
 	// Dynamic binding between modules
 	virtual asUINT      GetImportedFunctionCount() const = 0;
 	virtual int         GetImportedFunctionIndexByDecl(const char *decl) const = 0;
@@ -1042,6 +1046,11 @@ public:
 	virtual int     SetReturnAddress(void *addr) = 0;
 	virtual int     SetReturnObject(void *obj) = 0;
 	virtual void   *GetAddressOfReturnLocation() = 0;
+	// Whether the value in the return location (a value type returned on the stack) is constructed.
+	// GetAddressOfReturnLocation and SetReturnObject set it; if the function raises an exception, a
+	// constructed value is destroyed. A function that gets the location before constructing the value
+	// there (a callee may fail) clears it, and sets it once the value is constructed.
+	virtual void    SetReturnValueConstructed(bool constructed) = 0;
 
 protected:
 	virtual ~asIScriptGeneric() {}

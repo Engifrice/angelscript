@@ -532,6 +532,12 @@ void *asCGeneric::GetAddressOfReturnLocation()
 }
 
 // interface
+void asCGeneric::SetReturnValueConstructed(bool constructed)
+{
+	returnValueConstructed = constructed;
+}
+
+// interface
 int asCGeneric::GetReturnTypeId(asDWORD *flags) const
 {
 	return sysFunction->GetReturnTypeId(flags);

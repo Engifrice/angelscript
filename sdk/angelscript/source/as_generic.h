@@ -85,6 +85,7 @@ public:
 	int     SetReturnAddress(void *addr);
 	int     SetReturnObject(void *obj);
 	void   *GetAddressOfReturnLocation();
+	void    SetReturnValueConstructed(bool constructed);
 
 //------------------------
 // internal
